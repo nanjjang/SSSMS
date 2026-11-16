@@ -125,9 +125,9 @@ def make_batch(reals, coll_real, coll_spoof, bs):
     xs, ys = [], []
     for _ in range(bs):
         r = rng.random()
-        if coll_spoof and r < 0.15:
+        if coll_spoof and r < 0.25:
             img = coll_spoof[rng.integers(len(coll_spoof))]; xs.append(real_aug(img)); ys.append(0)
-        elif coll_real and r < 0.30:
+        elif coll_real and r < 0.45:
             img = coll_real[rng.integers(len(coll_real))]; xs.append(real_aug(img)); ys.append(1)
         elif r < 0.65:
             img = reals[rng.integers(len(reals))]
@@ -177,6 +177,11 @@ def main():
         att = screen_attack(img) if rng.random() < 0.5 else print_attack(img)
         vx.append(to_input(recapture(att))); vy.append(0)
     vx, vy = np.stack(vx), np.array(vy)
+    # 실제 카메라로 찍은 평가용 샘플(학습에 안 씀): data/liveness/real_val, spoof_val
+    cr_val, cs_val = load_collected("real_val"), load_collected("spoof_val")
+    cvx = np.stack([to_input(x) for x in cr_val + cs_val]) if cr_val or cs_val else None
+    cvy = np.array([1] * len(cr_val) + [0] * len(cs_val))
+    print(f"camera validation: real={len(cr_val)} spoof={len(cs_val)}")
 
     model = LiveNet().to(device)
     print("LiveNet params:", count_params(model))
@@ -197,10 +202,18 @@ def main():
             p = torch.cat([F.softmax(model(t(vx[i:i + 512], device)), 1)[:, 1].cpu() for i in range(0, len(vx), 512)]).numpy()
         # APCER: attacks accepted as real, BPCER: real users rejected (ISO/IEC 30107-3 metrics) at 0.5
         apcer = float((p[vy == 0] >= 0.5).mean()); bpcer = float((p[vy == 1] < 0.5).mean()); acer = (apcer + bpcer) / 2
-        log.append({"epoch": ep, "loss": tl / args.steps, "APCER": apcer, "BPCER": bpcer, "ACER": acer})
-        print(f"== epoch {ep}: loss {tl / args.steps:.4f} | APCER {apcer:.4f} BPCER {bpcer:.4f} ACER {acer:.4f}", flush=True)
-        if acer <= best:
-            best = acer; torch.save(model.state_dict(), os.path.join(CKPT, "livenet_best.pt"))
+        cam = {}
+        if cvx is not None and len(cr_val) and len(cs_val):
+            with torch.no_grad():
+                pc = torch.cat([F.softmax(model(t(cvx[i:i + 512], device)), 1)[:, 1].cpu() for i in range(0, len(cvx), 512)]).numpy()
+            cam = {"cam_APCER": float((pc[cvy == 0] >= 0.5).mean()), "cam_BPCER": float((pc[cvy == 1] < 0.5).mean())}
+            cam["cam_ACER"] = (cam["cam_APCER"] + cam["cam_BPCER"]) / 2
+        log.append({"epoch": ep, "loss": tl / args.steps, "APCER": apcer, "BPCER": bpcer, "ACER": acer, **cam})
+        extra = f" | camera APCER {cam['cam_APCER']:.4f} BPCER {cam['cam_BPCER']:.4f} ACER {cam['cam_ACER']:.4f}" if cam else ""
+        print(f"== epoch {ep}: loss {tl / args.steps:.4f} | APCER {apcer:.4f} BPCER {bpcer:.4f} ACER {acer:.4f}{extra}", flush=True)
+        score = (acer + cam["cam_ACER"]) / 2 if cam else acer  # 실제 카메라 평가가 있으면 함께 반영
+        if score <= best:
+            best = score; torch.save(model.state_dict(), os.path.join(CKPT, "livenet_best.pt"))
         json.dump(log, open(os.path.join(CKPT, "liveness_log.json"), "w"), indent=1)
 
     model.load_state_dict(torch.load(os.path.join(CKPT, "livenet_best.pt")))

@@ -5,3 +5,4 @@ ml/data/
 ml/checkpoints/
 ml/.venv/
 __pycache__/
+public/_vids/
