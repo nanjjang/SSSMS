@@ -1,0 +1,24 @@
+[Unit]
+Description=SSSMS (선린 야간자율학습실) web server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sssms
+Group=sssms
+WorkingDirectory=/opt/sssms/app
+EnvironmentFile=/opt/sssms/.env
+ExecStart=/usr/bin/node --no-warnings server/index.js
+Restart=always
+RestartSec=3
+# 보안 강화: 앱 폴더는 읽기 전용, 데이터·학습 샘플 폴더만 쓰기 허용
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/sssms/data /opt/sssms/app/ml/data
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

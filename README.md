@@ -32,3 +32,9 @@ GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com SCHOOL_DOMAIN=sunrint.hs.kr npm
 ```bash
 npm test
 ```
+
+## 배포
+Radxa Dragon Q6A + Cloudflare Tunnel 배포 방법은 [deploy/README.md](deploy/README.md)를 참고하세요. `sudo bash deploy/install.sh` 한 번으로 Node.js, systemd 서비스, 백업, cloudflared까지 설치됩니다.
+
+## 얼굴 인식 · 라이브니스 모델
+직접 학습시키는 모델과 학습 방법은 [ml/README.md](ml/README.md)를 참고하세요.

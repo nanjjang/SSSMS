@@ -107,9 +107,11 @@ const count = db.prepare('SELECT COUNT(*) c FROM users').get().c;
 if (count === 0) {
   const now = Date.now();
   const ins = db.prepare('INSERT INTO users (role, login_id, name, grade, class_no, number, pw_hash, created_at) VALUES (?,?,?,?,?,?,?,?)');
-  ins.run('admin', 'admin', '관리자', null, null, null, hashPw('admin1234'), now);
-  ins.run('kiosk', 'kiosk', '출석 키오스크', null, null, null, hashPw('kiosk1234'), now);
-  const names = ['김민준', '이서연', '박도윤', '최하은', '정시우', '강지아', '조예준', '윤수아'];
+  // 운영 배포에서는 .env의 ADMIN_PASSWORD / KIOSK_PASSWORD로 초기 비밀번호를 지정 (없으면 개발용 기본값)
+  ins.run('admin', 'admin', '관리자', null, null, null, hashPw(process.env.ADMIN_PASSWORD || 'admin1234'), now);
+  ins.run('kiosk', 'kiosk', '출석 키오스크', null, null, null, hashPw(process.env.KIOSK_PASSWORD || 'kiosk1234'), now);
+  const demo = process.env.SEED_DEMO !== '0'; // 운영 배포: SEED_DEMO=0 이면 데모 학생·출석 기록을 만들지 않음
+  const names = demo ? ['김민준', '이서연', '박도윤', '최하은', '정시우', '강지아', '조예준', '윤수아'] : [];
   names.forEach((n, i) => ins.run('student', `2${String(i + 1).padStart(4, '0')}`, n, 2, (i % 4) + 1, i + 1, hashPw('1234'), now));
 
   // default layout: 8 rows x 10 cols with aisle
@@ -127,7 +129,7 @@ if (count === 0) {
   // assign first 3 students to fixed seats
   const fixedSeats = db.prepare("SELECT id FROM seats WHERE type='fixed' ORDER BY id LIMIT 3").all();
   const studs = db.prepare("SELECT id FROM users WHERE role='student' ORDER BY id LIMIT 3").all();
-  fixedSeats.forEach((s, i) => db.prepare('UPDATE seats SET assigned_user_id=? WHERE id=?').run(studs[i].id, s.id));
+  fixedSeats.forEach((s, i) => studs[i] && db.prepare('UPDATE seats SET assigned_user_id=? WHERE id=?').run(studs[i].id, s.id));
 
   // demo attendance history (past 30 days) for streak/heatmap visuals
   const att = db.prepare('INSERT INTO attendance (user_id, seat_id, check_in, check_out, method) VALUES (?,?,?,?,?)');
@@ -142,5 +144,5 @@ if (count === 0) {
   }
   db.prepare("INSERT INTO posts (board, user_id, title, body, pinned, created_at) VALUES ('notice', 1, ?, ?, 1, ?)")
     .run('야간자율학습실 이용 안내', '운영시간: 18:00 ~ 23:00\n입실/퇴실은 반드시 키오스크 얼굴 인식으로 해주세요.\n지정석은 3일 연속 미출석 시 퇴출 후보가 됩니다.', now);
-  console.log('[seed] admin/admin1234, kiosk/kiosk1234, students 20001~20008 / 1234');
+  console.log(process.env.ADMIN_PASSWORD ? '[seed] admin/kiosk accounts created from .env' : '[seed] admin/admin1234, kiosk/kiosk1234, students 20001~20008 / 1234 (dev defaults)');
 }

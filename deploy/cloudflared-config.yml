@@ -1,0 +1,12 @@
+# /etc/cloudflared/config.yml
+# <TUNNEL_ID>와 <도메인>을 바꿔 넣으세요 (cloudflared tunnel create sssms 출력에 TUNNEL_ID가 나옵니다)
+tunnel: <TUNNEL_ID>
+credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: <도메인>            # 예: yaja.sunrin.example
+    service: http://127.0.0.1:3000
+    originRequest:
+      connectTimeout: 10s
+      noTLSVerify: false
+  - service: http_status:404
