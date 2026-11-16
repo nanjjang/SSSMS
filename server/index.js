@@ -1,6 +1,7 @@
 process.env.TZ ||= 'Asia/Seoul';
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
+import { readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
@@ -10,6 +11,8 @@ import { verifyGoogleIdToken, parseStudentProfile, GOOGLE_CLIENT_ID, SCHOOL_DOMA
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const PORT = Number(process.env.PORT || 3000);
+// Cloudflare Tunnel 배포 시 외부 직접 접속을 막기 위해 기본은 로컬호스트에만 바인딩 (LAN 공개가 필요하면 HOST=0.0.0.0)
+const HOST = process.env.HOST || '127.0.0.1';
 const DAY = 86400000;
 
 // ---------- helpers ----------
@@ -445,6 +448,23 @@ route('GET', '/api/admin/candidates', async (req) => { auth(req, ['admin']); ret
 route('POST', '/api/admin/seats/:id/revoke', async (req, p) => {
   auth(req, ['admin']); db.prepare('UPDATE seats SET assigned_user_id=NULL, type=\'free\' WHERE id=?').run(p.id); return { ok: true };
 });
+// 라이브니스 재학습용 샘플 수집 (정렬된 112x112 얼굴 JPEG) → ml/data/liveness/{real,spoof}
+const LIVE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'ml', 'data', 'liveness');
+route('GET', '/api/admin/liveness-samples', async (req) => {
+  auth(req, ['admin']);
+  const n = (l) => { try { return readdirSync(join(LIVE_DIR, l)).filter((f) => f.endsWith('.jpg')).length; } catch { return 0; } };
+  return { real: n('real'), spoof: n('spoof') };
+});
+route('POST', '/api/admin/liveness-samples', async (req) => {
+  auth(req, ['admin']); const { label, image } = await body(req);
+  if (!['real', 'spoof'].includes(label)) fail(400, 'label은 real 또는 spoof');
+  const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(image || ''));
+  if (!m) fail(400, 'JPEG 이미지가 필요합니다');
+  const buf = Buffer.from(m[1], 'base64'); if (buf.length > 200000) fail(413, '이미지가 너무 큽니다');
+  mkdirSync(join(LIVE_DIR, label), { recursive: true });
+  writeFileSync(join(LIVE_DIR, label, `${Date.now()}_${randomBytes(3).toString('hex')}.jpg`), buf);
+  return { ok: true };
+});
 route('GET', '/api/admin/settings', async (req) => { auth(req, ['admin']); return getSettings(); });
 route('PUT', '/api/admin/settings', async (req) => {
   auth(req, ['admin']); const b = await body(req);
@@ -520,7 +540,7 @@ createServer(async (req, res) => {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: e.status ? e.message : '서버 오류' }));
   }
-}).listen(PORT, () => {
+}).listen(PORT, HOST, () => {
   autoCheckout();
   console.log(`SSSMS running → http://localhost:${PORT}  (student /student, admin /admin, kiosk /kiosk)`);
 });

@@ -11,7 +11,7 @@ window.addEventListener('hashchange', async () => {
   const m = document.getElementById('main'); if (!m) return renderShell();
   document.querySelectorAll('[data-p]').forEach((b) => b.classList.toggle('on', b.dataset.p === page));
   document.getElementById('side')?.classList.remove('open');
-  try { await ({ dash, seats, att, students, evict, black, inquiry, lost, notice, settings })[page](); } catch (e) { m.innerHTML = `<div class="panel empty-state">${h(e.message)}</div>`; }
+  try { await ({ dash, seats, att, students, evict, black, inquiry, lost, notice, settings, aidata })[page](); } catch (e) { m.innerHTML = `<div class="panel empty-state">${h(e.message)}</div>`; }
   m.classList.remove('enter'); void m.offsetWidth; m.classList.add('enter'); scrollTo(0, 0);
 });
 
@@ -37,7 +37,7 @@ const GROUPS = [
   ['운영', [['dash', 'layout-dashboard', '', '오늘 현황'], ['att', 'calendar', '', '출석 내역'], ['seats', 'layout-grid', '', '좌석 배치']]],
   ['학생', [['students', 'users', '', '학생 관리'], ['evict', 'user-minus', '', '지정석 퇴출 후보'], ['black', 'ban', '', '입실 제한']]],
   ['게시판', [['inquiry', 'message', '', '문의·건의'], ['lost', 'package', '', '분실물'], ['notice', 'speakerphone', '', '공지사항']]],
-  ['', [['settings', 'settings', '', '설정']]],
+  ['', [['aidata', 'scan-eye', '', 'AI 학습 데이터'], ['settings', 'settings', '', '설정']]],
 ];
 async function renderShell() {
   app.innerHTML = `
@@ -51,7 +51,7 @@ async function renderShell() {
   app.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => { location.hash = b.dataset.p; });
   app.querySelector('#menu').onclick = () => app.querySelector('#side').classList.toggle('open');
   app.querySelector('#logout').onclick = async () => { await api.logout(); renderLogin(); };
-  try { await ({ dash, seats, att, students, evict, black, inquiry, lost, notice, settings })[page](); }
+  try { await ({ dash, seats, att, students, evict, black, inquiry, lost, notice, settings, aidata })[page](); }
   catch (e) { main().innerHTML = `<div class="panel empty-state">${h(e.message)}</div>`; }
 }
 const main = () => document.getElementById('main');
@@ -422,6 +422,45 @@ async function notice() {
 }
 
 // ---------- 설정 ----------
+// ---------- AI 학습 데이터 수집 (라이브니스 모델 재학습용) ----------
+async function aidata() {
+  const c = await api.get('/api/admin/liveness-samples');
+  main().innerHTML = `${title('AI 학습 데이터')}
+  <div class="panel ai-wrap">
+    <div class="ai-cam"><video id="av" autoplay muted playsinline></video><canvas id="ac" width="112" height="112"></canvas><p class="mut" id="ast">카메라를 켜는 중</p></div>
+    <div class="ai-side">
+      <p class="ai-lead">키오스크 카메라로 <b>실제 얼굴</b>과 <b>가짜 얼굴</b>(휴대폰 화면, 태블릿, 인쇄한 사진)을 찍어 모으면, 사진·화면 공격을 막는 모델을 이 환경에 맞게 다시 학습할 수 있어요.</p>
+      <div class="ai-cnt"><div><span>실제 얼굴</span><b id="nr">${c.real}</b></div><div><span>가짜 얼굴</span><b id="ns">${c.spoof}</b></div></div>
+      <div class="ai-btns"><button class="btn primary" data-l="real">실제 얼굴 30장 찍기</button><button class="btn" data-l="spoof">가짜 얼굴 30장 찍기</button></div>
+      <ul class="ai-tips"><li>실제 얼굴: 여러 학생이, 조명·거리·각도를 바꿔가며</li><li>가짜 얼굴: 다른 학생 사진을 휴대폰·태블릿 화면에 띄우거나 인쇄해서 카메라에 비추기</li><li>각각 최소 300장 이상 모은 뒤 <code>ml/train_liveness.py</code>를 다시 실행하세요</li></ul>
+    </div></div>`;
+  const { loadHuman, startCamera } = await import('/common/face.js');
+  const { alignFace } = await import('/common/sssms-models.js');
+  const v = main().querySelector('#av'), st = main().querySelector('#ast'), prev = main().querySelector('#ac').getContext('2d');
+  let stop = null; let busy = false;
+  const obs = new MutationObserver(() => { if (!document.body.contains(v)) { stop?.(); obs.disconnect(); } });
+  obs.observe(document.body, { childList: true, subtree: true });
+  try { stop = await startCamera(v); } catch (e) { st.textContent = e.message; return; }
+  st.textContent = 'AI 모델을 불러오는 중'; const human = await loadHuman(); st.textContent = '얼굴을 화면에 맞추고 버튼을 누르세요';
+  main().querySelectorAll('[data-l]').forEach((b) => b.onclick = async () => {
+    if (busy) return; busy = true; const label = b.dataset.l; let got = 0, tries = 0;
+    main().querySelectorAll('[data-l]').forEach((x) => (x.disabled = true));
+    while (got < 30 && tries < 400) {
+      tries++;
+      const r = await human.detect(v); const f = r.face?.[0];
+      if (r.face?.length === 1 && f.mesh?.length && (f.faceScore ?? f.score) > 0.6) {
+        const ctx = alignFace(v, f.mesh); prev.drawImage(ctx.canvas, 0, 0);
+        await api.post('/api/admin/liveness-samples', { label, image: ctx.canvas.toDataURL('image/jpeg', 0.92) });
+        got++; st.textContent = `${label === 'real' ? '실제' : '가짜'} 얼굴 ${got}/30`;
+        await new Promise((res) => setTimeout(res, 150));
+      } else await new Promise((res) => requestAnimationFrame(res));
+    }
+    const n = await api.get('/api/admin/liveness-samples'); main().querySelector('#nr').textContent = n.real; main().querySelector('#ns').textContent = n.spoof;
+    st.textContent = got ? `${got}장 저장했어요` : '얼굴을 찾지 못했어요'; busy = false;
+    main().querySelectorAll('[data-l]').forEach((x) => (x.disabled = false));
+  });
+}
+
 async function settings() {
   const s = await api.get('/api/admin/settings');
   const G = [
