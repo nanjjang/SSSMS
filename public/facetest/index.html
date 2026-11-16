@@ -41,6 +41,15 @@
   .crop canvas { width: 112px; height: 112px; border-radius: 10px; background: #000; }
   .note { font-size: 13px; color: var(--t3); line-height: 1.6; margin: 10px 0 0; }
   .slider { display: flex; align-items: center; gap: 10px; font-size: 14px; margin-top: 10px; } .slider input { flex: 1; }
+  .verdict { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 12px; background: var(--bg); margin-bottom: 12px; }
+  .verdict b { font-size: 18px; } .verdict .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--t3); flex: none; }
+  .verdict.live { background: #e5f8ee; } .verdict.live .dot { background: var(--green); }
+  .verdict.spoof { background: #ffeeee; } .verdict.spoof .dot { background: var(--red); }
+  .checks > div { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .checks .st { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #fff; background: var(--t3); }
+  .checks .st.ok { background: var(--green); } .checks .st.bad { background: var(--red); }
+  .checks small { display: block; color: var(--t3); font-size: 12px; }
+  #earc { width: 100%; height: 70px; background: var(--bg); border-radius: 10px; margin-top: 10px; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -62,10 +71,23 @@
   </section>
 
   <aside style="display:grid;gap:16px;align-content:start">
+    <section class="card"><h2>살아 있는 사람인가</h2>
+      <div class="verdict" id="verdict"><span class="dot"></span><div><b id="vTxt">확인 중</b><small class="meta" id="vSub" style="display:block"></small></div></div>
+      <div class="checks" id="checks"></div>
+      <canvas id="earc" width="600" height="140"></canvas>
+      <p class="note">그래프: 눈 열림 정도(EAR). 파란 선이 아래로 뾰족하게 내려가면 깜빡임이에요. 점선은 '감음' 기준.</p>
+      <div class="slider">움직임 기준 <input type="range" id="mth" min="0.001" max="0.03" step="0.001"><b id="mthv" class="num"></b></div>
+      <p class="note">세 가지를 모두 통과해야 '살아 있는 사람'이에요. 사진은 깜빡이지 못하고, 손에 들고 흔들어도 판 전체가 통째로 움직여서 '미세한 움직임'이 0에 가까워요. 화면에 띄운 영상은 깜빡이고 움직여도 화면 질감에서 걸려요.</p></section>
     <section class="card"><h2>누구와 얼마나 닮았나</h2><div class="bars" id="bars"><p class="note">사람을 등록하면 여기 유사도가 실시간으로 표시돼요.</p></div>
       <div class="slider">판정 기준값 <input type="range" id="th" min="0" max="0.8" step="0.01"><b id="thv" class="num"></b></div>
       <p class="note">빨간 선(기준값)을 넘으면 같은 사람으로 판정해요. 기본값은 학습 때 LFW에서 찾은 최적값이에요. 높이면 다른 사람을 잘못 받아들일 위험이 줄고, 대신 본인을 놓칠 수 있어요.</p></section>
     <section class="card"><h2>모델이 보는 얼굴</h2><div class="crop"><canvas id="crop" width="112" height="112"></canvas><p class="note" style="margin:0">두 눈·코·입 양끝 5점으로 반듯하게 정렬한 112×112 얼굴이에요. 학습 데이터와 같은 구도일수록 정확해요.</p></div></section>
+    <section class="card"><h2>내 카메라로 보정하기</h2>
+      <p class="note" style="margin-top:0">사진·깜빡임 판별을 이 카메라와 휴대폰에 맞추는 단계예요. 각각 10초씩 녹화하면 기준값을 자동으로 다시 계산하고, 그 장면을 학습 데이터로 저장해요.</p>
+      <div class="row"><button class="primary" id="recReal">진짜 얼굴 10초 녹화</button><button id="recSpoof">가짜(휴대폰 사진·영상) 10초 녹화</button></div>
+      <div class="bars" id="recStat" style="margin-top:12px"></div>
+      <p class="note" id="recCount"></p>
+      <p class="note">진짜: 평소처럼 화면을 보며 자연스럽게 깜빡이기. 가짜: 휴대폰에 얼굴 사진이나 영상을 띄워 카메라 앞에서 들고 있다가 살짝 흔들기.</p></section>
     <section class="card"><h2>등록된 사람 <span class="meta" id="pc"></span></h2><div class="people" id="people"></div>
       <div class="row"><button id="clear">모두 지우기</button></div></section>
   </aside>
@@ -73,6 +95,11 @@
 <script type="module">
 import { loadHuman, startCamera } from '/common/face.js';
 import { infer, cosine, alignFace } from '/common/sssms-models.js';
+import { LivenessTracker } from '/common/liveness.js';
+const tracker = new LivenessTracker();
+let fi = 0, lastEmb = null, rec = null;
+try { const c = JSON.parse(localStorage.getItem('sssms_facetest_calib') || 'null'); if (c) Object.assign(tracker.o, c); } catch {}
+const stats = { real: null, spoof: null };
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'sssms_facetest_people';
@@ -92,9 +119,15 @@ async function frame(video) {
   $('sFaces').textContent = faces.length;
   if (faces.length !== 1 || !faces[0].mesh?.length) return { faces: faces.length };
   const f = faces[0];
-  const o = await infer(human.sssms, video, f.mesh);
-  $('crop').getContext('2d').drawImage(alignFace(video, f.mesh).canvas, 0, 0);
-  return { faces: 1, f, ...o };
+  // 신원 임베딩은 3프레임에 한 번만(무거움), 라이브니스는 매 프레임 → 짧은 깜빡임도 놓치지 않게
+  fi++;
+  const o = await infer(human.sssms, video, f.mesh, { embed: fi % 3 === 0 || !lastEmb });
+  if (o.embedding) lastEmb = o.embedding; else o.embedding = lastEmb;
+  const ctxc = $('crop').getContext('2d'); ctxc.drawImage(alignFace(video, f.mesh).canvas, 0, 0);
+  const gestureBlink = (r.gesture || []).some((g) => g.face === 0 && String(g.gesture).startsWith('blink'));
+  const lv = tracker.update(f.mesh, { own: o.real, human: f.real, gestureBlink });
+  if (rec) recordFrame(lv, o.real, f.real);
+  return { faces: 1, f, lv, ...o };
 }
 
 function show(res) {
@@ -103,17 +136,80 @@ function show(res) {
   if (res.f) { const [x, y, w, h] = res.f.box; ctx.lineWidth = 4; ctx.strokeStyle = '#3182f6'; ctx.strokeRect(x, y, w, h); }
   if (!res.embedding) {
     $('whoTxt').textContent = res.faces > 1 ? '한 명만 화면에 있어야 해요' : '얼굴을 화면에 비춰주세요';
-    $('whoTag').textContent = ''; $('whoTag').className = 'tag'; $('sTop').textContent = '-'; $('sLive').textContent = '-'; return;
+    $('whoTag').textContent = ''; $('whoTag').className = 'tag'; $('sTop').textContent = '-'; $('sLive').textContent = '-'; tracker.reset(); drawLive(null); return;
   }
   $('sLive').textContent = res.real != null ? `${Math.round(res.real * 100)}%` : '-';
   const scored = people.map((p) => ({ name: p.name, s: Math.max(...p.embs.map((e) => cosine(res.embedding, e))) })).sort((a, b) => b.s - a.s);
   const top = scored[0];
   $('bars').innerHTML = scored.length ? scored.map((p, i) => `<div><span>${p.name}</span><span class="bar ${i === 0 ? 'top' : ''}"><i style="width:${Math.max(0, p.s) * 100}%"></i><span class="th" style="left:${threshold * 100}%"></span></span><span class="num">${p.s.toFixed(3)}</span></div>`).join('') : '<p class="note">사람을 등록하면 여기 유사도가 실시간으로 표시돼요.</p>';
   $('sTop').textContent = top ? top.s.toFixed(3) : '-';
-  const live = res.real == null || res.real >= 0.5;
+  drawLive(res.lv);
+  const live = res.lv?.live;
   if (!top) { $('whoTxt').innerHTML = '등록된 사람이 없어요'; $('whoTag').textContent = ''; $('whoTag').className = 'tag'; }
-  else if (top.s >= threshold) { $('whoTxt').innerHTML = `<b>${top.name}</b>`; $('whoTag').textContent = live ? '인식 성공' : '사진·화면 의심'; $('whoTag').className = `tag ${live ? 'ok' : 'warn'}`; }
+  else if (top.s >= threshold) { $('whoTxt').innerHTML = `<b>${top.name}</b>`; $('whoTag').textContent = live ? '인식 성공' : res.lv?.spoofLikely ? '사진·화면 의심' : '살아있는지 확인 중'; $('whoTag').className = `tag ${live ? 'ok' : res.lv?.spoofLikely ? 'no' : 'warn'}`; }
   else { $('whoTxt').innerHTML = '<b>모르는 사람</b>'; $('whoTag').textContent = '미등록'; $('whoTag').className = 'tag no'; }
+}
+
+async function refreshCount() { try { const c = await fetch('/api/dev/liveness-sample').then((r) => r.json()); $('recCount').textContent = `저장된 학습 데이터: 진짜 ${c.real ?? 0}장 · 가짜 ${c.spoof ?? 0}장`; } catch {} }
+function recordFrame(lv, own, hum) {
+  rec.n++; rec.motion.push(lv.checks.motion.value); if (own != null) rec.own.push(own); if (hum != null) rec.human.push(hum);
+  rec.blinks = Math.max(rec.blinks, lv.checks.blink.value);
+  if (rec.n % 2 === 0 && rec.saved < 150) { rec.saved++; fetch('/api/dev/liveness-sample', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ label: rec.label, image: $('crop').toDataURL('image/jpeg', 0.92) }) }).catch(() => {}); }
+}
+const q = (a, p) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
+const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+async function record(label) {
+  if (rec) return;
+  tracker.reset();
+  rec = { label, n: 0, saved: 0, motion: [], own: [], human: [], blinks: 0 };
+  for (const b of [$('recReal'), $('recSpoof')]) b.disabled = true;
+  for (let s = 10; s > 0; s--) { $('vSub').textContent = `${label === 'real' ? '진짜' : '가짜'} 녹화 중 ${s}초`; await new Promise((r) => setTimeout(r, 1000)); }
+  const r = rec; rec = null;
+  stats[label] = { motion: q(r.motion, 0.8), motionLow: q(r.motion, 0.2), own: mean(r.own), human: mean(r.human), blinks: r.blinks, frames: r.n, saved: r.saved };
+  for (const b of [$('recReal'), $('recSpoof')]) b.disabled = false;
+  calibrate(); refreshCount();
+}
+function calibrate() {
+  const R = stats.real, S = stats.spoof;
+  const line = (name, x) => x ? `<div><span>${name}</span><span class="meta">움직임 ${x.motion?.toFixed(4) ?? '-'} · 자체 질감 ${x.own != null ? Math.round(x.own * 100) + '%' : '-'} · Human 질감 ${x.human != null ? Math.round(x.human * 100) + '%' : '-'} · 깜빡임 ${x.blinks}회</span><span class="num">${x.frames}f</span></div>` : '';
+  let tip = '';
+  if (R && S) {
+    // 움직임 기준: 진짜의 하위 20%와 가짜의 상위 20% 사이 (기하평균)
+    if (R.motionLow != null && S.motion != null && R.motionLow > S.motion) tracker.o.motionMin = +Math.sqrt(R.motionLow * S.motion).toFixed(4);
+    else if (S.motion != null) tracker.o.motionMin = +(S.motion * 1.2).toFixed(4);
+    // 질감: 두 모델 중 진짜·가짜를 더 잘 가르는 쪽을 보고 중간값으로
+    const sepOwn = (R.own ?? 0) - (S.own ?? 0), sepHum = (R.human ?? 0) - (S.human ?? 0);
+    const best = sepOwn >= sepHum ? ['own', R.own, S.own] : ['human', R.human, S.human];
+    if (best[1] != null && best[2] != null && best[1] > best[2]) { tracker.o.textureSource = best[0]; tracker.o.textureMin = +(((best[1] + best[2]) / 2)).toFixed(2); }
+    try { localStorage.setItem('sssms_facetest_calib', JSON.stringify({ motionMin: tracker.o.motionMin, textureMin: tracker.o.textureMin, textureSource: tracker.o.textureSource })); } catch {}
+    $('mth').value = tracker.o.motionMin; $('mthv').textContent = tracker.o.motionMin.toFixed(3);
+    tip = `<p class="note">보정 완료 → 움직임 기준 ${tracker.o.motionMin.toFixed(4)}, 질감은 ${tracker.o.textureSource === 'own' ? '자체 모델' : 'Human 모델'} 기준 ${Math.round(tracker.o.textureMin * 100)}%. ${R.motionLow > S.motion ? '' : '⚠ 움직임만으로는 진짜·가짜가 겹쳐요 — 질감 모델 재학습이 필요해요.'}</p>`;
+  }
+  $('recStat').innerHTML = line('진짜', R) + line('가짜', S) + tip;
+}
+$('recReal').onclick = () => record('real');
+$('recSpoof').onclick = () => record('spoof');
+refreshCount();
+
+function drawLive(lv) {
+  const v = $('verdict');
+  if (!lv) { v.className = 'verdict'; $('vTxt').textContent = '얼굴을 비춰주세요'; $('vSub').textContent = ''; $('checks').innerHTML = ''; return; }
+  v.className = `verdict ${lv.live ? 'live' : lv.spoofLikely ? 'spoof' : ''}`;
+  $('vTxt').textContent = lv.live ? '살아 있는 사람' : lv.spoofLikely ? '사진·화면으로 의심돼요' : !lv.ready ? '확인 중' : !lv.checks.blink.ok ? '눈을 한 번 깜빡여 주세요' : '조금 더 지켜보는 중';
+  $('vSub').textContent = lv.live ? '깜빡임 · 미세 움직임 · 질감 모두 통과' : '';
+  const c = lv.checks;
+  const row = (k, val, desc) => `<div><span class="st ${c[k].ok ? 'ok' : lv.ready ? 'bad' : ''}">${c[k].ok ? '✓' : '·'}</span><span>${c[k].label}<small>${desc}</small></span><b class="num">${val}</b></div>`;
+  $('checks').innerHTML =
+    row('blink', `${c.blink.value}회`, '최근 8초 안에 감았다 뜬 횟수') +
+    row('motion', c.motion.value.toFixed(4), `표정·눈꺼풀·입체 움직임 (기준 ${tracker.o.motionMin.toFixed(3)})`) +
+    row('texture', c.texture.value != null ? `${Math.round(c.texture.value * 100)}%` : '-', '자체 모델·안티스푸핑 중 낮은 점수 (기준 50%)');
+  // EAR graph
+  const cv = $('earc'), g = cv.getContext('2d'); g.clearRect(0, 0, cv.width, cv.height);
+  const s = lv.earSeries; if (s.length < 2) return;
+  const t0 = s[0].t, t1 = s.at(-1).t, max = Math.max(0.5, ...s.map((x) => x.e)) * 1.1;
+  const X = (t) => ((t - t0) / Math.max(1, t1 - t0)) * cv.width, Y = (e) => cv.height - (e / max) * cv.height;
+  g.setLineDash([6, 6]); g.strokeStyle = '#f04452'; g.lineWidth = 2; g.beginPath(); g.moveTo(0, Y(lv.earBase * tracker.o.blinkDrop)); g.lineTo(cv.width, Y(lv.earBase * tracker.o.blinkDrop)); g.stroke();
+  g.setLineDash([]); g.strokeStyle = '#3182f6'; g.lineWidth = 3; g.beginPath(); s.forEach((x, i) => (i ? g.lineTo(X(x.t), Y(x.e)) : g.moveTo(X(x.t), Y(x.e)))); g.stroke();
 }
 
 async function loop() {
@@ -138,6 +234,8 @@ $('enroll').onclick = async () => {
   busy = false; $('enroll').disabled = false;
 };
 $('clear').onclick = () => { if (confirm('등록된 사람을 모두 지울까요?')) { people = []; save(); drawPeople(); } };
+$('mth').value = tracker.o.motionMin; $('mthv').textContent = tracker.o.motionMin.toFixed(3);
+$('mth').oninput = () => { tracker.o.motionMin = +$('mth').value; $('mthv').textContent = tracker.o.motionMin.toFixed(3); };
 $('th').oninput = () => { threshold = +$('th').value; $('thv').textContent = threshold.toFixed(2); };
 
 drawPeople();

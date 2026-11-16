@@ -455,16 +455,28 @@ route('GET', '/api/admin/liveness-samples', async (req) => {
   const n = (l) => { try { return readdirSync(join(LIVE_DIR, l)).filter((f) => f.endsWith('.jpg')).length; } catch { return 0; } };
   return { real: n('real'), spoof: n('spoof') };
 });
-route('POST', '/api/admin/liveness-samples', async (req) => {
-  auth(req, ['admin']); const { label, image } = await body(req);
+// 테스트 페이지(/facetest) 녹화용: 이 컴퓨터에서 직접 접속한 경우만 허용 (Cloudflare 터널·프록시 경유 요청은 거부)
+const isLocalDirect = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) && !req.headers['cf-connecting-ip'] && !req.headers['x-forwarded-for'];
+route('POST', '/api/dev/liveness-sample', async (req) => {
+  if (!isLocalDirect(req)) fail(403, '이 컴퓨터에서만 사용할 수 있어요');
+  return saveLiveSample(await body(req));
+});
+route('GET', '/api/dev/liveness-sample', async (req) => {
+  if (!isLocalDirect(req)) fail(403, '이 컴퓨터에서만 사용할 수 있어요');
+  const n = (l) => { try { return readdirSync(join(LIVE_DIR, l)).filter((f) => f.endsWith('.jpg')).length; } catch { return 0; } };
+  return { real: n('real'), spoof: n('spoof') };
+});
+function saveLiveSample({ label, image, split }) {
   if (!['real', 'spoof'].includes(label)) fail(400, 'label은 real 또는 spoof');
+  if (split === 'val') label = `${label}_val`; // 학습에 쓰지 않는 평가용
   const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(image || ''));
   if (!m) fail(400, 'JPEG 이미지가 필요합니다');
   const buf = Buffer.from(m[1], 'base64'); if (buf.length > 200000) fail(413, '이미지가 너무 큽니다');
   mkdirSync(join(LIVE_DIR, label), { recursive: true });
   writeFileSync(join(LIVE_DIR, label, `${Date.now()}_${randomBytes(3).toString('hex')}.jpg`), buf);
   return { ok: true };
-});
+}
+route('POST', '/api/admin/liveness-samples', async (req) => { auth(req, ['admin']); return saveLiveSample(await body(req)); });
 route('GET', '/api/admin/settings', async (req) => { auth(req, ['admin']); return getSettings(); });
 route('PUT', '/api/admin/settings', async (req) => {
   auth(req, ['admin']); const b = await body(req);
@@ -484,6 +496,9 @@ route('POST', '/api/kiosk/identify', async (req) => {
   // server-side re-validation of presentation attack detection results
   if (!pad || pad.real < +s.antispoof_threshold || pad.live < +s.liveness_threshold || !pad.challenge_passed || !(pad.continuity >= 0.55))
     fail(422, '실제 얼굴 확인(라이브니스)에 실패했습니다');
+  // 깜빡임·비강체 움직임(사진/화면 흔들기 공격 방지) 재검증 — 클라이언트가 보낸 경우 서버 기준으로 다시 확인
+  if (pad.blinks != null && (!(pad.blinks >= 1) || !(pad.motion >= 0.004)))
+    fail(422, '눈 깜빡임과 자연스러운 움직임이 확인되지 않았어요');
   if (!Array.isArray(embedding)) fail(400, '임베딩 없음');
   const vec = toVec(embedding);
   const cands = db.prepare("SELECT id, name, face FROM users WHERE role='student' AND face IS NOT NULL").all();
