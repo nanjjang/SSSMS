@@ -4,3 +4,4 @@ data/
 ml/data/
 ml/checkpoints/
 ml/.venv/
+__pycache__/

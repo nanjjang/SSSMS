@@ -88,6 +88,23 @@ class ArcFace(nn.Module):
         return F.cross_entropy(logits, labels), cos
 
 
+class CosFace(nn.Module):
+    """Large-margin cosine loss (Wang et al. 2018): logit = s*(cos - m) for the target class.
+    More stable than ArcFace when training a small network from scratch (no angular-margin cliff)."""
+
+    def __init__(self, emb, n_classes, s=64.0, m=0.35):
+        super().__init__()
+        self.W = nn.Parameter(torch.empty(n_classes, emb))
+        nn.init.xavier_uniform_(self.W)
+        self.s, self.m = s, m
+
+    def forward(self, emb, labels):
+        cos = F.linear(emb, F.normalize(self.W)).clamp(-1, 1)
+        onehot = F.one_hot(labels, cos.size(1)).to(cos.dtype)
+        logits = self.s * (cos - onehot * self.m)
+        return F.cross_entropy(logits, labels), cos
+
+
 class LiveNet(nn.Module):
     """Tiny anti-spoof classifier with an auxiliary high-frequency texture branch.
 

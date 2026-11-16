@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSSMS 학습 대시보드</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#f2f4f6; --card:#fff; --t1:#191f28; --t2:#4e5968; --t3:#6b7684; --line:#e5e8eb; --blue:#3182f6; --green:#03b26c; --orange:#ff8a00; --red:#f04452; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#101013; --card:#17171c; --t1:#ececf0; --t2:#b0b0bb; --t3:#8b8b97; --line:#2c2c35; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--t1); font-family: 'Pretendard Variable', Pretendard, -apple-system, sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 28px 20px 48px; display: grid; gap: 16px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 26px; margin: 0; }
+  .live { font-size: 13px; color: var(--t3); display: inline-flex; align-items: center; gap: 6px; }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: p 1.6s infinite; }
+  .live.stale i { background: var(--orange); animation: none; }
+  @keyframes p { 50% { opacity: .3; } }
+  .card { background: var(--card); border-radius: 18px; padding: 22px 24px; }
+  .card h2 { font-size: 17px; margin: 0 0 14px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0; }
+  .stats div { padding: 4px 18px; border-left: 1px solid var(--line); }
+  .stats div:first-child { border-left: 0; padding-left: 0; }
+  .stats span { display: block; font-size: 13px; color: var(--t3); }
+  .stats b { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stats small { font-size: 13px; color: var(--t3); font-weight: 500; }
+  .bar { height: 12px; background: var(--line); border-radius: 6px; overflow: hidden; margin: 18px 0 8px; }
+  .bar i { display: block; height: 100%; background: var(--blue); border-radius: 6px; transition: width .6s; }
+  .sub { display: flex; justify-content: space-between; font-size: 13px; color: var(--t3); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+  canvas { width: 100% !important; height: 260px !important; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th { text-align: right; color: var(--t3); font-weight: 500; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  td { text-align: right; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  tr.best td { color: var(--blue); font-weight: 700; }
+  .note { font-size: 13px; color: var(--t3); line-height: 1.6; margin: 10px 0 0; }
+  .tag { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: #e8f3ff; color: var(--blue); }
+  .tag.done { background: #e5f8ee; color: var(--green); }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>얼굴 인식 모델 학습</h1><span class="tag" id="state">학습 중</span><span class="live" id="live"><i></i><span id="upd">불러오는 중</span></span></header>
+
+  <section class="card">
+    <div class="stats">
+      <div><span>진행</span><b id="ep">-</b></div>
+      <div><span>LFW 정확도 (최신)</span><b id="lfw">-</b></div>
+      <div><span>최고 기록</span><b id="best">-</b></div>
+      <div><span>현재 손실</span><b id="loss">-</b></div>
+      <div><span>남은 시간</span><b id="eta">-</b></div>
+    </div>
+    <div class="bar"><i id="pbar" style="width:0%"></i></div>
+    <div class="sub"><span id="ptext">-</span><span id="speed">-</span></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card"><h2>검증 정확도 (에폭별)</h2><canvas id="cAcc"></canvas>
+      <p class="note">LFW: 일반 얼굴 · CFP-FP: 정면↔옆모습 · AgeDB-30: 나이 차이. 학습에 쓰지 않은 실제 사진 쌍으로 측정.</p></section>
+    <section class="card"><h2>학습 손실 (낮을수록 좋음)</h2><canvas id="cLoss"></canvas>
+      <p class="note">200 스텝마다 기록. 학습률(점선, 오른쪽 축)이 내려가는 후반에 손실이 크게 떨어지는 것이 정상.</p></section>
+  </div>
+
+  <section class="card"><h2>에폭 기록</h2>
+    <table><thead><tr><th>에폭</th><th>LFW</th><th>CFP-FP</th><th>AgeDB-30</th><th>TAR@FAR 1%</th><th>기준값</th><th>소요</th></tr></thead><tbody id="tb"></tbody></table>
+    <p class="note">TAR@FAR 1%: 다른 사람을 1%만 잘못 받아들이도록 엄격하게 잡았을 때 본인을 알아보는 비율. 기준값이 0.99 근처면 얼굴 구분이 안 되는 상태(붕괴).</p></section>
+
+  <section class="card"><h2>라이브니스 모델 (진짜 사람 판별)</h2><canvas id="cLive"></canvas>
+    <p class="note">APCER: 가짜를 진짜로 통과시킨 비율 · BPCER: 진짜를 거부한 비율 · ACER: 평균 (낮을수록 좋음)</p></section>
+</main>
+<script>
+const q = new URLSearchParams(location.search);
+const LOG = q.get('log') || 'checkpoints/recog_casia2.log';
+const TOTAL_EP = +(q.get('epochs') || 18);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+Chart.defaults.font.family = "'Pretendard Variable', Pretendard, sans-serif";
+Chart.defaults.color = css('--t3');
+const grid = { color: css('--line') };
+const mk = (id, cfg) => new Chart(document.getElementById(id), cfg);
+const acc = mk('cAcc', { type: 'line', data: { labels: [], datasets: [
+  { label: 'LFW', data: [], borderColor: css('--blue'), backgroundColor: css('--blue'), tension: .3 },
+  { label: 'CFP-FP', data: [], borderColor: css('--green'), backgroundColor: css('--green'), tension: .3 },
+  { label: 'AgeDB-30', data: [], borderColor: css('--orange'), backgroundColor: css('--orange'), tension: .3 },
+] }, options: { animation: false, maintainAspectRatio: false, scales: { y: { min: 50, max: 100, ticks: { callback: (v) => v + '%' }, grid }, x: { grid } }, plugins: { legend: { position: 'bottom' } } } });
+const loss = mk('cLoss', { type: 'line', data: { labels: [], datasets: [
+  { label: '손실', data: [], borderColor: css('--blue'), pointRadius: 0, borderWidth: 2, yAxisID: 'y' },
+  { label: '학습률', data: [], borderColor: css('--t3'), borderDash: [4, 4], pointRadius: 0, borderWidth: 1.5, yAxisID: 'y1' },
+] }, options: { animation: false, maintainAspectRatio: false, scales: { y: { grid }, y1: { position: 'right', grid: { display: false } }, x: { grid, ticks: { maxTicksLimit: 10 } } }, plugins: { legend: { position: 'bottom' } } } });
+const live = mk('cLive', { type: 'line', data: { labels: [], datasets: [
+  { label: 'ACER', data: [], borderColor: css('--blue'), tension: .3 },
+  { label: 'APCER', data: [], borderColor: css('--red'), tension: .3, borderDash: [4, 3] },
+  { label: 'BPCER', data: [], borderColor: css('--orange'), tension: .3, borderDash: [4, 3] },
+] }, options: { animation: false, maintainAspectRatio: false, scales: { y: { min: 0, ticks: { callback: (v) => v + '%' }, grid }, x: { grid } }, plugins: { legend: { position: 'bottom' } } } });
+
+const fmtT = (s) => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h}시간 ${m}분` : `${m}분`; };
+const pct = (x) => (x * 100).toFixed(1) + '%';
+let lastLen = 0, lastChange = Date.now();
+
+async function tick() {
+  let txt;
+  try { txt = await fetch(LOG + '?t=' + Date.now()).then((r) => r.text()); } catch { return; }
+  if (txt.length !== lastLen) { lastLen = txt.length; lastChange = Date.now(); }
+  const its = [], eps = [];
+  let steps = 1916;
+  for (const line of txt.split('\n')) {
+    let m = /^ep (\d+) it (\d+)\/(\d+) loss ([\d.]+) train-acc ([\d.]+) lr ([\d.]+) (\d+)s/.exec(line);
+    if (m) { steps = +m[3]; its.push({ ep: +m[1], it: +m[2], loss: +m[4], lr: +m[6], t: +m[7] }); continue; }
+    m = /^== epoch (\d+): LFW ([\d.]+) CFP-FP ([\d.]+) AgeDB ([\d.]+) \(thr ([\d.]+)\) \| TAR@FAR1% ([\d.]+) \| (\d+)s/.exec(line);
+    if (m) eps.push({ ep: +m[1], lfw: +m[2], cfp: +m[3], age: +m[4], thr: +m[5], tar: +m[6], t: +m[7] });
+  }
+  const done = /exported/.test(txt);
+  const last = its.at(-1);
+  // progress
+  const cur = last ? last.ep + last.it / steps : 0;
+  const frac = done ? 1 : Math.min(1, cur / TOTAL_EP);
+  document.getElementById('pbar').style.width = (frac * 100).toFixed(1) + '%';
+  document.getElementById('ep').innerHTML = last ? `${Math.min(TOTAL_EP, last.ep + 1)}<small> / ${TOTAL_EP} 에폭</small>` : '-';
+  document.getElementById('ptext').textContent = last ? `에폭 ${last.ep + 1} · ${last.it.toLocaleString()} / ${steps.toLocaleString()} 스텝 · 전체 ${(frac * 100).toFixed(1)}%` : '시작 대기';
+  // speed / ETA from the latest two iteration lines of the current epoch
+  const same = its.filter((x) => x.ep === last?.ep);
+  let secPerStep = null;
+  if (same.length >= 2) { const a = same.at(-2), b = same.at(-1); secPerStep = (b.t - a.t) / (b.it - a.it); }
+  const epAvg = eps.length ? eps.reduce((s, e) => s + e.t, 0) / eps.length : null;
+  if (secPerStep) {
+    const evalT = 120;
+    const remain = (steps - last.it) * secPerStep + evalT + (TOTAL_EP - last.ep - 1) * (steps * secPerStep + evalT);
+    document.getElementById('eta').textContent = done ? '완료' : fmtT(remain);
+    document.getElementById('speed').textContent = `${secPerStep.toFixed(2)}초/스텝${epAvg ? ` · 에폭 평균 ${fmtT(epAvg)}` : ''}`;
+  }
+  document.getElementById('loss').textContent = last ? last.loss.toFixed(2) : '-';
+  const le = eps.at(-1); const best = eps.reduce((b, e) => (!b || e.lfw + e.cfp + e.age > b.lfw + b.cfp + b.age ? e : b), null);
+  document.getElementById('lfw').textContent = le ? pct(le.lfw) : '-';
+  document.getElementById('best').innerHTML = best ? `${pct(best.lfw)}<small> · 에폭 ${best.ep + 1}</small>` : '-';
+  const st = document.getElementById('state'); st.textContent = done ? '완료' : '학습 중'; st.classList.toggle('done', done);
+  // charts
+  acc.data.labels = eps.map((e) => `${e.ep + 1}`);
+  acc.data.datasets[0].data = eps.map((e) => e.lfw * 100); acc.data.datasets[1].data = eps.map((e) => e.cfp * 100); acc.data.datasets[2].data = eps.map((e) => e.age * 100);
+  acc.update();
+  loss.data.labels = its.map((x) => `${x.ep + 1}.${String(Math.round(x.it / steps * 10))}`);
+  loss.data.datasets[0].data = its.map((x) => x.loss); loss.data.datasets[1].data = its.map((x) => x.lr);
+  loss.update();
+  document.getElementById('tb').innerHTML = eps.slice().reverse().map((e) => `<tr class="${e === best ? 'best' : ''}"><td>${e.ep + 1}</td><td>${pct(e.lfw)}</td><td>${pct(e.cfp)}</td><td>${pct(e.age)}</td><td>${pct(e.tar)}</td><td>${e.thr.toFixed(3)}</td><td>${fmtT(e.t)}</td></tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--t3)">첫 에폭이 끝나면 표시돼요</td></tr>';
+  const stale = Date.now() - lastChange > 120000 && !done;
+  document.getElementById('live').classList.toggle('stale', stale);
+  document.getElementById('upd').textContent = stale ? '2분 넘게 새 로그 없음' : `실시간 · ${new Date().toLocaleTimeString('ko-KR', { hour12: false })} 갱신`;
+}
+async function tickLive() {
+  try {
+    const log = await fetch('checkpoints/liveness_log.json?t=' + Date.now()).then((r) => r.json());
+    live.data.labels = log.map((e) => `${e.epoch + 1}`);
+    live.data.datasets[0].data = log.map((e) => e.ACER * 100); live.data.datasets[1].data = log.map((e) => e.APCER * 100); live.data.datasets[2].data = log.map((e) => e.BPCER * 100);
+    live.update();
+  } catch {}
+}
+tick(); tickLive();
+setInterval(tick, 5000); setInterval(tickLive, 30000);
+</script>
+</body>
+</html>
