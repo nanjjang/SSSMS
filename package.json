@@ -1,0 +1,13 @@
+{
+  "name": "sssms",
+  "version": "1.0.0",
+  "description": "Smart Self-Study Management System — 야간자율학습실 관리 (학생앱 · 관리자웹 · 얼굴인식 키오스크)",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --no-warnings server/index.js",
+    "dev": "node --no-warnings --watch server/index.js",
+    "test": "node --no-warnings --test test/"
+  }
+}
