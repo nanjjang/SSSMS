@@ -3,6 +3,7 @@
 //  1) passive: anti-spoof CNN (`real`) + liveness CNN (`live`) averaged over frames
 //  2) active: randomized challenge–response (blink / head turn / mouth open)
 //  3) continuity: same identity at start & end of the challenge, single face only
+import { loadModels, infer, cosine } from './sssms-models.js';
 const HUMAN_VER = '3.3.6';
 const CDN = `https://cdn.jsdelivr.net/npm/@vladmandic/human@${HUMAN_VER}`;
 
@@ -33,6 +34,7 @@ export function loadHuman() {
     });
     await human.load();
     await human.warmup();
+    human.sssms = await loadModels(); // 자체 학습 모델(있으면) — 임베딩·라이브니스를 대체
     return human;
   })();
   return humanPromise;
@@ -72,6 +74,19 @@ function analyze(res, video) {
   };
 }
 
+/** 자체 모델이 있으면 정렬 얼굴로 임베딩·라이브니스를 다시 계산 */
+async function enrich(human, a, video) {
+  if (!human.sssms || a.faces !== 1 || !a.f?.mesh?.length) return a;
+  try {
+    const r = await infer(human.sssms, video, a.f.mesh);
+    if (r.embedding) a.emb = r.embedding;
+    if (r.real != null) a.real = r.real;
+    a.model = 'sssms';
+  } catch (e) { console.warn('sssms infer failed', e); }
+  return a;
+}
+const sim = (human, x, y) => (x.length === 128 && y.length === 128 ? (cosine(x, y) + 1) / 2 : human.match.similarity(x, y));
+
 function avgEmb(list) {
   const n = list[0].length; const out = new Array(n).fill(0);
   for (const e of list) for (let i = 0; i < n; i++) out[i] += e[i];
@@ -95,7 +110,7 @@ export async function verifyLive(human, video, { onState, signal, steps = 2, tim
     if (signal?.aborted) throw new Error('취소됨');
     if (performance.now() - t0 > timeoutMs) throw new Error('시간이 초과되었습니다. 다시 시도해주세요.');
     const res = await human.detect(video);
-    const a = analyze(res, video);
+    const a = await enrich(human, analyze(res, video), video);
     if (a.faces > 1) { onState?.({ phase, text: '한 명씩 인식해주세요', a, warn: true }); await frame(); continue; }
     if (!a.faces) { alignSince = 0; onState?.({ phase, text: '얼굴을 화면 중앙에 맞춰주세요', a }); await frame(); continue; }
 
@@ -130,7 +145,7 @@ export async function verifyLive(human, video, { onState, signal, steps = 2, tim
       if (Math.abs(a.yaw) > 0.2 || !a.emb?.length) { await frame(); continue; }
       const lastEmb = Array.from(a.emb);
       const real = realSum / n, live = liveSum / n;
-      const continuity = firstEmb ? human.match.similarity(firstEmb, lastEmb) : 0;
+      const continuity = firstEmb ? sim(human, firstEmb, lastEmb) : 0;
       const recent = frontal.slice(-8);
       return { embedding: avgEmb(recent.length ? recent : [lastEmb]), pad: { real, live, continuity, challenge_passed: true, challenges: plan, frames: n } };
     }
@@ -144,7 +159,7 @@ export async function captureSamples(human, video, { count = 5, onState, signal,
   while (out.length < count) {
     if (signal?.aborted) throw new Error('취소됨');
     if (performance.now() - t0 > 30000) throw new Error('시간 초과');
-    const a = analyze(await human.detect(video), video);
+    const a = await enrich(human, analyze(await human.detect(video), video), video);
     let text = '';
     if (a.faces !== 1) text = a.faces ? '한 명만 화면에 있어야 합니다' : '얼굴을 화면에 맞춰주세요';
     else if (a.size < 0.2) text = '조금 더 가까이';
