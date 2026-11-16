@@ -9,8 +9,8 @@
  "norm": "(x-127.5)/128",
  "output": "logits[spoof, real]",
  "crop": "aligned 112x112 face resized to 80x80",
- "best_ACER": 0.04533333333333334,
- "collected_real": 0,
- "collected_spoof": 0,
+ "best_ACER": 0.03166666666666666,
+ "collected_real": 157,
+ "collected_spoof": 108,
  "note": "synthetic-attack baseline; retrain after collecting kiosk samples"
 }
