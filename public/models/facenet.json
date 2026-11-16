@@ -1,0 +1,21 @@
+{
+ "name": "sssms-facenet",
+ "input": [
+  1,
+  3,
+  112,
+  112
+ ],
+ "norm": "(x-127.5)/128",
+ "embedding": 128,
+ "metric": "cosine",
+ "lfw_acc": 0.9873333333333333,
+ "cfp_fp_acc": 0.9145714285714284,
+ "agedb_30_acc": 0.9125000000000002,
+ "threshold_best_acc": 0.2855,
+ "threshold_far1": 0.25878721475601196,
+ "tar_far1": 0.9886666666666667,
+ "epoch": 18,
+ "of_epochs": 18,
+ "train": "CASIA-WebFace (real, 10,572 ids, non-commercial research)"
+}
