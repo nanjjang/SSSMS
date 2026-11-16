@@ -83,17 +83,17 @@ function toTensor(ort, ctx, size, flip = false) {
 const l2 = (v) => { let s = 0; for (const x of v) s += x * x; s = Math.sqrt(s) || 1; return Array.from(v, (x) => x / s); };
 
 /** 정렬 얼굴 → { embedding(128, L2정규화), real(0~1) } */
-export async function infer(models, video, mesh) {
+export async function infer(models, video, mesh, { embed = true, live = true } = {}) {
   const ctx = alignFace(video, mesh);
   const out = {};
-  if (models.face) {
+  if (models.face && embed) {
     // onnxruntime-web은 같은 세션의 동시 실행을 허용하지 않으므로 순서대로 실행
     const e1 = await models.face.run({ input: toTensor(models.ort, ctx, 112) });
     const e2 = await models.face.run({ input: toTensor(models.ort, ctx, 112, true) });
     const a = e1.embedding.data, b = e2.embedding.data;
     out.embedding = l2(Array.from(a, (x, i) => x + b[i])); // 좌우 반전 TTA
   }
-  if (models.live) {
+  if (models.live && live) {
     const c80 = canvas(80); c80.drawImage(ctx.canvas, 0, 0, 80, 80);
     const r = await models.live.run({ input: toTensor(models.ort, c80, 80) });
     const [s, re] = r.logits.data; const m = Math.max(s, re);

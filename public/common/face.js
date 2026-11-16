@@ -4,6 +4,7 @@
 //  2) active: randomized challenge–response (blink / head turn / mouth open)
 //  3) continuity: same identity at start & end of the challenge, single face only
 import { loadModels, infer, cosine } from './sssms-models.js';
+import { LivenessTracker } from './liveness.js';
 const HUMAN_VER = '3.3.6';
 const CDN = `https://cdn.jsdelivr.net/npm/@vladmandic/human@${HUMAN_VER}`;
 
@@ -35,6 +36,8 @@ export function loadHuman() {
     await human.load();
     await human.warmup();
     human.sssms = await loadModels(); // 자체 학습 모델(있으면) — 임베딩·라이브니스를 대체
+    // 자체 인식 모델이 있으면 Human의 FaceRes(임베딩·나이·성별)는 매 프레임 돌릴 필요가 없음 → 프레임 속도↑ (짧은 깜빡임을 놓치지 않게)
+    if (human.sssms?.face) human.config.face.description.enabled = false;
     return human;
   })();
   return humanPromise;
@@ -104,7 +107,10 @@ export async function verifyLive(human, video, { onState, signal, steps = 2, tim
   let phase = 'align'; let alignSince = 0; let stepIdx = 0;
   let realSum = 0, liveSum = 0, n = 0;
   const frontal = []; let firstEmb = null;
-  let turn = { neg: false, pos: false }; let blinkOpen = false; let blinkCount = 0;
+  let turn = { neg: false, pos: false };
+  // 이 기기에서 /facetest 로 보정한 기준값이 있으면 사용 (키오스크 태블릿에서 한 번 보정하면 됨)
+  let calib = null; try { calib = JSON.parse(localStorage.getItem('sssms_facetest_calib') || 'null'); } catch {}
+  const tracker = new LivenessTracker(calib || {}); let blinksAtStep = 0; let lv = null;
 
   while (true) {
     if (signal?.aborted) throw new Error('취소됨');
@@ -114,8 +120,9 @@ export async function verifyLive(human, video, { onState, signal, steps = 2, tim
     if (a.faces > 1) { onState?.({ phase, text: '한 명씩 인식해주세요', a, warn: true }); await frame(); continue; }
     if (!a.faces) { alignSince = 0; onState?.({ phase, text: '얼굴을 화면 중앙에 맞춰주세요', a }); await frame(); continue; }
 
-    // passive PAD accumulates every frame
+    // passive PAD accumulates every frame + 깜빡임·비강체 움직임·질감 추적
     realSum += a.real; liveSum += a.live; n++;
+    if (a.f?.mesh?.length) lv = tracker.update(a.f.mesh, { own: a.model === 'sssms' ? a.real : null, human: a.f.real, gestureBlink: a.blink });
     if (Math.abs(a.yaw) < 0.2 && a.quality > 0.6 && a.emb?.length) { frontal.push(Array.from(a.emb)); firstEmb ||= Array.from(a.emb); }
 
     if (phase === 'align') {
@@ -125,29 +132,36 @@ export async function verifyLive(human, video, { onState, signal, steps = 2, tim
       alignSince ||= performance.now();
       const p = Math.min(1, (performance.now() - alignSince) / 600);
       onState?.({ phase, text: '좋아요, 잠시만 유지하세요', progress: p, a });
-      if (p >= 1) { phase = 'challenge'; }
+      if (p >= 1) { phase = 'challenge'; blinksAtStep = lv?.checks.blink.value ?? 0; }
       await frame(); continue;
     }
 
     if (phase === 'challenge') {
       const c = plan[stepIdx];
       let done = false;
-      if (c === 'blink') { if (!a.blink) blinkOpen = true; else if (blinkOpen) { blinkCount++; blinkOpen = false; } done = blinkCount >= 1; }
+      if (c === 'blink') done = (lv?.checks.blink.value ?? 0) > blinksAtStep; // EAR 기반 깜빡임
       if (c === 'turn') { if (a.yaw < -0.3) turn.neg = true; if (a.yaw > 0.3) turn.pos = true; done = turn.neg && turn.pos; }
       if (c === 'mouth') done = a.mouth >= 30;
       onState?.({ phase, text: CHALLENGES[c].text, icon: CHALLENGES[c].icon, step: stepIdx + 1, steps: plan.length, challenge: c, turn, a });
-      if (done) { stepIdx++; if (stepIdx >= plan.length) phase = 'final'; else await sleep(250); }
+      if (done) { stepIdx++; blinksAtStep = lv?.checks.blink.value ?? 0; if (stepIdx >= plan.length) phase = 'final'; else await sleep(250); }
       await frame(); continue;
     }
 
     if (phase === 'final') {
-      onState?.({ phase, text: '정면을 바라봐주세요', a });
+      const st = tracker.state();
+      const needBlink = !st.checks.blink.ok;
+      onState?.({ phase, text: needBlink ? '정면을 보고 눈을 한 번 깜빡여주세요' : '정면을 바라봐주세요', a });
       if (Math.abs(a.yaw) > 0.2 || !a.emb?.length) { await frame(); continue; }
+      // 살아 있는 사람 3중 확인: 깜빡임 + 비강체 움직임 + 질감
+      if (st.ready && !st.checks.texture.ok) throw new Error('사진이나 화면이 아닌 실제 얼굴로 다시 해주세요');
+      if (st.ready && !st.checks.motion.ok) throw new Error('움직임이 없어 실제 사람인지 확인하지 못했어요');
+      if (!st.live) { await frame(); continue; }
       const lastEmb = Array.from(a.emb);
       const real = realSum / n, live = liveSum / n;
       const continuity = firstEmb ? sim(human, firstEmb, lastEmb) : 0;
       const recent = frontal.slice(-8);
-      return { embedding: avgEmb(recent.length ? recent : [lastEmb]), pad: { real, live, continuity, challenge_passed: true, challenges: plan, frames: n } };
+      return { embedding: avgEmb(recent.length ? recent : [lastEmb]), pad: { real, live, continuity, challenge_passed: true, challenges: plan, frames: n,
+        blinks: st.checks.blink.value, motion: +st.checks.motion.value.toFixed(4), texture: st.checks.texture.value } };
     }
   }
 }
