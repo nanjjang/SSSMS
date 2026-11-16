@@ -1,0 +1,120 @@
+/* =====================================================================
+   키오스크 (세로 태블릿 우선, 가로 대응) — 공통 토큰은 /common/style.css
+   원칙: 한 화면에 지시 하나. 큰 글씨(제목 40, 본문 20), 버튼 높이 72.
+   흰 바탕 · 원형 카메라 · 파란 진행 링. 결과는 아이콘 원 + 제목 + 요약 표.
+   ===================================================================== */
+html, body { height: 100%; overflow: hidden; background: var(--surface); user-select: none; -webkit-user-select: none; }
+#app { height: 100%; display: flex; flex-direction: column; }
+.t1 { font-size: clamp(30px, 4.2vh, 44px); line-height: 1.3; font-weight: 700; letter-spacing: -0.03em; text-align: center; }
+.sub { margin-top: 12px; font-size: clamp(17px, 2.2vh, 22px); line-height: 1.5; color: var(--text-2); text-align: center; }
+
+/* 상단 */
+.top { display: flex; justify-content: space-between; align-items: center; padding: 24px 32px 16px; }
+.who { display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+.who img { width: 40px; height: 40px; border-radius: 50%; }
+@media (prefers-color-scheme: dark) { .who img, .lg-logo { background: #fff; padding: 3px; } }
+.clock { font-size: 24px; font-weight: 600; color: var(--text-2); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+/* 상태 줄 */
+.kbnr { display: flex; align-items: center; gap: 16px; margin: 0 32px; padding: 16px 24px; border-radius: var(--r-xl); background: var(--surface-2); font-size: 18px; color: var(--text-2); }
+.kbnr b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; margin-left: 6px; }
+.kbnr .sep { width: 1px; height: 16px; background: var(--line); }
+.kbnr .grow { flex: 1; }
+.ai-st { display: inline-flex; align-items: center; gap: 8px; font-size: 16px; color: var(--text-3); }
+.ai-st::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--text-4); }
+.ai-st.on { color: var(--text-2); } .ai-st.on::before { background: var(--primary); }
+.kbnr.in { margin: 0 0 24px; background: var(--primary-soft); color: var(--primary-ink); }
+.kbnr.in b { color: var(--primary-ink); margin: 0; }
+.kbnr.in .ti { font-size: 24px; }
+
+/* 인식 단계 */
+.stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 32px 48px; min-height: 0; }
+.swap { animation: rise .32s var(--ease); }
+.cam { position: relative; width: min(46vh, 72vw); aspect-ratio: 1; margin-top: clamp(32px, 5vh, 56px); }
+.cam video { position: absolute; inset: 6%; width: 88%; height: 88%; border-radius: 50%; object-fit: cover; transform: scaleX(-1); background: var(--surface-2); }
+.cam-ph { position: absolute; inset: 6%; border-radius: 50%; display: grid; place-items: center; font-size: clamp(64px, 10vh, 112px); color: var(--text-4); z-index: 0; }
+.cam-ph.err, .cam[data-mode=error] .cam-ph.def { display: none; }
+.cam[data-mode=error] .cam-ph.err { display: grid; color: var(--danger); }
+.cam video { z-index: 1; }
+.cam[data-mode=error] video { visibility: hidden; }
+.ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; z-index: 2; }
+.ring circle { fill: none; stroke-width: 2.4; }
+.ring .bg { stroke: var(--line); }
+.ring .fg { stroke: var(--primary); stroke-linecap: round; transition: stroke-dashoffset .5s var(--ease), stroke .3s; }
+.cam[data-mode=warn] .fg { stroke: var(--danger); }
+.cam[data-mode=error] .bg { stroke: var(--danger); stroke-opacity: .45; }
+.cam[data-mode=verify] .ring { animation: spin 1.1s linear infinite; }
+.cam[data-mode=verify] .fg { stroke-dashoffset: 210 !important; }
+.cam[data-mode=idle] .ring .bg { animation: breathe 2.4s ease-in-out infinite; }
+@keyframes spin { to { transform: rotate(270deg); } }
+@keyframes breathe { 50% { stroke: var(--seat-free-line); } }
+.dots { display: flex; gap: 8px; height: 8px; margin-top: 32px; }
+.dots i { width: 8px; height: 8px; border-radius: 4px; background: var(--line); transition: background .3s, width .3s; }
+.dots i.now { width: 24px; background: var(--primary); }
+.dots i.done { background: var(--primary); }
+
+/* 전체 화면 페이지 */
+.page { display: flex; flex-direction: column; background: var(--surface); }
+.page.over { position: fixed; inset: 0; z-index: 50; padding: 48px 32px 32px; animation: pg-in .32s var(--ease); }
+.page.out { animation: pg-out .24s ease-in forwards; }
+@keyframes pg-in { from { opacity: 0; transform: translateY(24px); } }
+@keyframes pg-out { to { opacity: 0; } }
+.center { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.grow { flex: 1; }
+.phead { margin-bottom: 20px; }
+.phead .t1 { text-align: left; }
+
+.badge-ic { width: 112px; height: 112px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 32px; animation: pop .45s cubic-bezier(.34, 1.56, .64, 1); }
+.badge-ic.ok { background: var(--primary); } .badge-ic.bad { background: var(--danger); }
+.badge-ic svg { width: 60px; height: 60px; fill: none; stroke: #fff; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.badge-ic.ok path { stroke-dasharray: 40; stroke-dashoffset: 40; animation: draw .45s .2s ease-out forwards; }
+@keyframes pop { from { transform: scale(.4); opacity: 0; } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+
+.list { width: min(560px, 100%); margin-top: 40px; padding: 8px 28px; border-radius: var(--r-xl); background: var(--surface-2); }
+.list div { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; padding: 18px 0; font-size: 20px; line-height: 1.4; }
+.list div + div { border-top: 1px solid var(--line); }
+.list span { color: var(--text-2); flex: none; } .list b { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.list.big { width: 100%; }
+.list.big div { font-size: 22px; padding: 22px 0; }
+
+/* 좌석 선택 */
+.front { text-align: center; font-size: 15px; color: var(--text-3); padding-bottom: 10px; margin-bottom: 20px; border-bottom: 2px solid var(--line); }
+.pmap { flex: 1; min-height: 0; overflow: auto; }
+.pmap.seatmap { gap: 10px; align-content: start; }
+.pmap .cell { font-size: clamp(14px, 2vw, 18px) !important; border-radius: var(--r-md) !important; }
+.pmap .seat.hl { transform: scale(1.06); }
+.legend.k { justify-content: center; gap: 24px; margin: 20px 0; font-size: 16px; color: var(--text-2); }
+.legend.k .sw { width: 16px; height: 16px; border-radius: 5px; }
+
+.bar2 { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
+.kbtn { height: 72px; border: 0; border-radius: var(--r-xl); font-size: 22px; font-weight: 600; background: var(--surface-2); color: var(--text); cursor: pointer; transition: transform .1s, background .15s; }
+.kbtn:active { transform: scale(.98); background: var(--surface-3); }
+.kbtn.primary { background: var(--primary); color: #fff; }
+.kbtn.primary:active { background: var(--primary-press); }
+.kbtn:disabled { background: var(--surface-2); color: var(--text-4); }
+.cd { text-align: center; font-size: 16px; color: var(--text-3); margin-top: 16px; font-variant-numeric: tabular-nums; }
+
+/* 로그인 */
+.lg-logo { width: 88px; height: 88px; margin-bottom: 28px; border-radius: 50%; }
+.page.center { height: 100%; padding: 32px; }
+.login-f { display: grid; gap: 12px; width: min(420px, 100%); margin-top: 40px; }
+.kin { height: 60px; border: 0; background: var(--surface-2); border-radius: var(--r-lg); padding: 0 20px; font-size: 18px; outline: none; color: var(--text); }
+.kin:focus { box-shadow: inset 0 0 0 2px var(--primary); background: var(--surface); }
+.login-f .kbtn { margin-top: 8px; }
+@media (prefers-reduced-motion: reduce) { .ring, .ring .bg { animation: none !important; } }
+
+/* 가로 화면: 왼쪽 카메라 | 오른쪽 안내, 좌석 선택은 지도 | 정보 분할 */
+@media (orientation: landscape) and (min-width: 1000px) {
+  .stage { display: grid; grid-template-columns: auto minmax(0, 520px); grid-template-rows: auto auto auto; column-gap: 64px; align-content: center; justify-content: center; }
+  .stage .cam { grid-column: 1; grid-row: 1 / 4; margin: 0; width: min(56vh, 40vw); }
+  .stage .t1, .stage .sub { grid-column: 2; text-align: left; }
+  .stage .t1 { align-self: end; } .stage .sub { align-self: start; }
+  .stage .dots { grid-column: 2; margin-top: 24px; }
+  .page.over:has(.pmap) { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(340px, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto auto; column-gap: 48px;
+    grid-template-areas: "front head" "map bnr" "map ." "legend btns" "legend cd"; }
+  .page.over:has(.pmap) .phead { grid-area: head; } .page.over:has(.pmap) .kbnr { grid-area: bnr; }
+  .page.over:has(.pmap) .front { grid-area: front; } .page.over:has(.pmap) .pmap { grid-area: map; }
+  .page.over:has(.pmap) .legend { grid-area: legend; justify-content: flex-start; margin-bottom: 0; } .page.over:has(.pmap) .bar2 { grid-area: btns; } .page.over:has(.pmap) .cd { grid-area: cd; }
+  .page.over:has(.list.big) { padding-left: 20vw; padding-right: 20vw; }
+}
