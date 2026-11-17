@@ -12,8 +12,12 @@ export async function verifyGoogleIdToken(idToken) {
   if (p.aud !== GOOGLE_CLIENT_ID) throw Object.assign(new Error('잘못된 클라이언트'), { status: 401 });
   if (!['accounts.google.com', 'https://accounts.google.com'].includes(p.iss)) throw Object.assign(new Error('잘못된 발급자'), { status: 401 });
   if (String(p.email_verified) !== 'true') throw Object.assign(new Error('이메일 인증이 필요한 계정입니다'), { status: 401 });
+  // 학교 Google Workspace 계정만 허용: hd(조직 도메인)와 이메일 도메인이 모두 학교 도메인이어야 한다
+  // (둘 중 하나만 보면 학교 주소로 만든 개인 구글 계정이나 다른 조직 계정이 통과할 수 있음)
   const domain = String(p.email).split('@')[1]?.toLowerCase();
-  if (p.hd !== SCHOOL_DOMAIN && domain !== SCHOOL_DOMAIN) throw Object.assign(new Error(`학교 계정(@${SCHOOL_DOMAIN})으로 로그인해주세요`), { status: 403 });
+  const school = SCHOOL_DOMAIN.toLowerCase();
+  if (String(p.hd || '').toLowerCase() !== school || domain !== school) throw Object.assign(new Error(`학교 계정(@${SCHOOL_DOMAIN})으로 로그인해주세요`), { status: 403 });
+  if (!p.sub) throw Object.assign(new Error('구글 인증에 실패했습니다'), { status: 401 });
   return { sub: p.sub, email: String(p.email).toLowerCase(), name: p.name || '', given: p.given_name || '', family: p.family_name || '' };
 }
 

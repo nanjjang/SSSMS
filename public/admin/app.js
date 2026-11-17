@@ -276,7 +276,7 @@ function editStudent(u) {
   modal(`<form class="stack"><h2>${u ? '학생 정보 수정' : '학생 추가'}</h2>
     <div class="row"><label class="field grow">학번<input class="input" name="login_id" value="${h(u?.login_id || '')}" ${u ? 'disabled' : 'required'}></label><label class="field grow">이름<input class="input" name="name" value="${h(u?.name || '')}" required></label></div>
     <div class="row"><label class="field grow">학년<input class="input" type="number" name="grade" value="${u?.grade ?? ''}"></label><label class="field grow">반<input class="input" type="number" name="class_no" value="${u?.class_no ?? ''}"></label><label class="field grow">번호<input class="input" type="number" name="number" value="${u?.number ?? ''}"></label></div>
-    <label class="field">${u ? '비밀번호 재설정 (비우면 유지)' : '초기 비밀번호 (기본 1234)'}<input class="input" name="password" type="password" autocomplete="new-password"></label>
+    <label class="field">${u ? '비밀번호 재설정 (비우면 유지 · 8자 이상)' : '비밀번호 (비우면 구글 로그인만 가능 · 8자 이상)'}<input class="input" name="password" type="password" autocomplete="new-password" minlength="8"></label>
     <div class="mbtns">${u ? `<span class="left row">${u.has_face ? '<button type="button" class="btn sm ghost danger" id="dface">얼굴 삭제</button>' : ''}<button type="button" class="btn sm ghost danger" id="del">학생 삭제</button></span>` : ''}<button type="button" class="btn" data-close>취소</button><button class="btn primary">저장</button></div></form>`, {
     onMount: (m, close) => {
       const f = m.querySelector('form');
@@ -464,14 +464,25 @@ async function aidata() {
 async function settings() {
   const s = await api.get('/api/admin/settings');
   const G = [
-    ['운영', [['room_name', '야자실 이름', '키오스크 상단에 보여요', 'text'], ['close_time', '운영 종료 시각', '이 시각까지 퇴실하지 않으면 자동 퇴실돼요', 'time'], ['daily_goal_min', '학생 하루 목표 (분)', '학생 앱 홈의 목표 달성률 기준', 'number'], ['absence_days', '지정석 퇴출 기준 (평일 수)', '연속으로 이만큼 안 나오면 퇴출 후보가 돼요', 'number']]],
+    ['운영', [['room_name', '야자실 이름', '키오스크 상단에 보여요', 'text'], ['open_time', '운영 시작 시각', '이 시각부터 키오스크에서 입실할 수 있어요', 'time'], ['close_time', '운영 종료 시각', '이후에는 입실할 수 없고, 퇴실하지 않은 학생은 자동 퇴실돼요', 'time'], ['daily_goal_min', '학생 하루 목표 (분)', '학생 앱 홈의 목표 달성률 기준', 'number'], ['absence_days', '지정석 퇴출 기준 (평일 수)', '연속으로 이만큼 안 나오면 퇴출 후보가 돼요', 'number']]],
     ['얼굴 인식', [['match_threshold', '매칭 임계값', '0~1 · 높을수록 엄격해요', 'number', '0.01'], ['match_margin', '1·2위 최소 차이', '비슷한 얼굴을 잘못 인식하지 않게 해요', 'number', '0.01'], ['antispoof_threshold', '위조 방지 임계값', '사진이나 화면을 막아요', 'number', '0.01'], ['liveness_threshold', '실제 사람 판별 임계값', '높을수록 엄격해요', 'number', '0.01']]],
     ['계정', [['admin_emails', '관리자 구글 계정', '쉼표로 구분해요', 'text']]],
   ];
   main().innerHTML = `${title('설정', '', '운영 시간, 인식 기준, 관리자 계정')}<form id="f"><div class="set-grid">
     ${G.map(([g, rows]) => `<div class="panel"><div class="panel-h"><h2>${g}</h2></div>${rows.map(([k, l, d, t, st]) => `<label class="set-row"><span><b>${l}</b><small>${d}</small></span><input class="input" name="${k}" type="${t}" ${st ? `step="${st}" min="0" max="1"` : ''} value="${h(s[k])}"></label>`).join('')}</div>`).join('')}
-    </div><div class="set-actions"><button class="btn primary lg">변경 사항 저장</button></div></form>`;
-  main().querySelector('#f').onsubmit = async (e) => { e.preventDefault(); await api.put('/api/admin/settings', Object.fromEntries(new FormData(e.target))); toast('설정을 저장했어요', 'ok'); };
+    </div><div class="set-actions"><button class="btn primary lg">변경 사항 저장</button></div></form>
+    <div class="set-grid" style="margin-top:32px">
+      <form class="panel" id="pw"><div class="panel-h"><h2>내 비밀번호</h2></div>
+        <label class="set-row"><span><b>현재 비밀번호</b></span><input class="input" type="password" name="current" autocomplete="current-password" required></label>
+        <label class="set-row"><span><b>새 비밀번호</b><small>8자 이상 · 바꾸면 다른 기기의 로그인은 끊겨요</small></span><input class="input" type="password" name="next" autocomplete="new-password" minlength="8" required></label>
+        <div class="set-actions"><button class="btn">비밀번호 바꾸기</button></div></form>
+      <form class="panel" id="kpw"><div class="panel-h"><h2>키오스크 비밀번호</h2></div>
+        <label class="set-row"><span><b>새 비밀번호</b><small>8자 이상 · 바꾸면 켜져 있는 키오스크가 로그아웃되니 새 비밀번호로 다시 로그인해 주세요</small></span><input class="input" type="password" name="password" autocomplete="new-password" minlength="8" required></label>
+        <div class="set-actions"><button class="btn">키오스크 비밀번호 바꾸기</button></div></form>
+    </div>`;
+  main().querySelector('#f').onsubmit = async (e) => { e.preventDefault(); try { await api.put('/api/admin/settings', Object.fromEntries(new FormData(e.target))); toast('설정을 저장했어요', 'ok'); } catch (err) { toast(err.message, 'error'); } };
+  main().querySelector('#pw').onsubmit = async (e) => { e.preventDefault(); const f = e.target; try { await api.post('/api/me/password', { current: f.current.value, next: f.next.value }); f.reset(); toast('비밀번호를 바꿨어요', 'ok'); } catch (err) { toast(err.message, 'error'); } };
+  main().querySelector('#kpw').onsubmit = async (e) => { e.preventDefault(); const f = e.target; try { await api.post('/api/admin/kiosk-password', { password: f.password.value }); f.reset(); toast('키오스크 비밀번호를 바꿨어요', 'ok'); } catch (err) { toast(err.message, 'error'); } };
 }
 
 boot();
