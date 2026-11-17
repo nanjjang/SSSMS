@@ -88,3 +88,5 @@ sudo systemctl enable --now cloudflared
 - [ ] Cloudflare 대시보드 → Security → WAF에서 `/api/login`에 Rate limiting 규칙 추가(무료 플랜 1개 가능)
 - [ ] 관리자 페이지 추가 보호가 필요하면 Cloudflare Zero Trust Access로 `/admin/*`에 학교 계정 로그인 걸기(50명까지 무료)
 - [ ] Q6A SSH는 비밀번호 대신 키 로그인, 기본 계정 비밀번호 변경
+
+설치 스크립트는 NodeSource와 Cloudflare의 전체 기본 키 지문을 `deploy/install.sh`에 고정하며, 다른 키가 내려오면 apt 저장소를 추가하기 전에 중단합니다. 공급자가 키를 교체하면 키 다운로드 주소와 다른 공식 채널에서 새 전체 지문을 확인한 뒤, 검토된 커밋으로 지문 상수를 갱신하세요.
