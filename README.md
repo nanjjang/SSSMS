@@ -25,7 +25,9 @@ GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com SCHOOL_DOMAIN=sunrint.hs.kr npm
 - 초기 계정 (첫 실행 때 시드로 생성):
   - 관리자: `admin` / `admin1234`
   - 키오스크: `kiosk` / `kiosk1234`
-  - 운영 전에 반드시 비밀번호를 바꾸세요.
+  - 운영 전에 반드시 비밀번호를 바꾸세요(관리자 → 설정, 또는 `node server/passwd.js admin`). 초기 비밀번호로는 서버 컴퓨터(localhost)에서만 로그인되고 외부에서는 거부됩니다.
+  - 관리자가 학생을 추가할 때 비밀번호를 비워 두면 구글 로그인으로만 들어올 수 있습니다.
+- 키오스크 입실은 설정의 운영 시작~종료 시각 사이에만 됩니다(퇴실은 언제든 가능). 시간 외 입실이 필요하면 관리자 화면의 수동 입실을 쓰세요.
 - 카메라는 HTTPS 또는 localhost에서만 작동합니다.
 
 ## 테스트

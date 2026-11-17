@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { scryptSync, randomBytes, timingSafeEqual } from 'node:crypto';
+import { scryptSync, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,6 +65,15 @@ const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
 if (!cols.includes('email')) db.exec('ALTER TABLE users ADD COLUMN email TEXT');
 if (!cols.includes('google_sub')) db.exec('ALTER TABLE users ADD COLUMN google_sub TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sub ON users(google_sub) WHERE google_sub IS NOT NULL');
+
+// 세션 토큰은 해시로만 저장한다 (DB·백업 파일이 유출돼도 로그인 세션을 그대로 쓸 수 없게)
+export const hashToken = (t) => createHash('sha256').update(String(t)).digest('hex');
+for (const r of db.prepare('SELECT token FROM tokens WHERE length(token) <> 64').all()) {
+  db.prepare('UPDATE tokens SET token=? WHERE token=?').run(hashToken(r.token), r.token);
+}
+
+// 누구나 아는 초기 비밀번호 (README·.env.example에 적힌 값). 새 비밀번호로 쓸 수 없고, 관리자·키오스크는 외부에서 이 값으로 로그인할 수 없다.
+export const WEAK_PASSWORDS = ['admin1234', 'kiosk1234', 'change-me-admin', 'change-me-kiosk', '1234'];
 
 export const DEFAULT_SETTINGS = {
   room_name: '야간자율학습실',

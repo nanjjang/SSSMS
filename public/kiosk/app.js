@@ -86,7 +86,9 @@ async function loop() {
     if (!res.face?.length) { await wait(200); continue; }
     busy = true;
     try {
+      const ch = await api.post('/api/kiosk/challenge'); // 서버가 정한 1회용 동작 챌린지
       const out = await verifyLive(human, video, {
+        plan: ch.plan,
         onState: (st) => {
           if (st.phase === 'align') state({ title: st.text, sub: '원 안에 얼굴이 꽉 차게 해주세요', progress: (st.progress || 0) * 0.25, mode: st.warn ? 'warn' : 'scan' });
           else if (st.phase === 'challenge') state({ title: st.text, sub: `${st.step}/${st.steps} 단계 · 실제 얼굴인지 확인하고 있어요`, progress: 0.25 + ((st.step - 1) / st.steps) * 0.6, mode: 'scan', step: st.step, steps: st.steps });
@@ -95,7 +97,7 @@ async function loop() {
       });
       state({ title: '확인하고 있어요', sub: '', progress: 1, mode: 'verify' });
       if (out.pad.real < cfg.antispoof_threshold || out.pad.live < cfg.liveness_threshold) throw new Error('사진이나 화면이 아닌 실제 얼굴로 다시 해주세요');
-      const r = await api.post('/api/kiosk/identify', out);
+      const r = await api.post('/api/kiosk/identify', { ...out, nonce: ch.nonce });
       fails = 0;
       await handleIdentified(r);
     } catch (e) {
@@ -104,6 +106,7 @@ async function loop() {
       const tip = /시간이 초과/.test(m) ? '화면 안내에 맞춰 천천히 따라 해주세요'
         : /실제 얼굴|라이브니스|사진/.test(m) ? '모자·마스크를 벗고 밝은 곳에서 정면을 봐주세요'
         : /등록된 얼굴/.test(m) ? '얼굴이 아직 등록되지 않았을 수 있어요'
+        : /입실 시간/.test(m) ? '운영 시간에 다시 와주세요. 급한 경우 감독 선생님께 말씀해주세요'
         : /제한/.test(m) ? '담당 선생님께 문의해주세요' : '잠시 후 다시 시도해주세요';
       await result({ ok: false, title: '인식 실패', sub: `${m}`, rows: [['이렇게 해보세요', tip], ...(fails >= 2 ? [['계속 안 되나요?', '감독 선생님께 말씀해주세요']] : [])], ms: fails >= 2 ? 6000 : 4000 });
     } finally { busy = false; await wait(500); }

@@ -101,16 +101,23 @@ function avgEmb(list) {
  * onState({phase, text, progress, step, steps, a}) is called each frame for UI.
  * Resolves { embedding, pad } or throws Error(message).
  */
-export async function verifyLive(human, video, { onState, signal, steps = 2, timeoutMs = 14000 } = {}) {
-  const plan = shuffle(Object.keys(CHALLENGES)).slice(0, steps);
+export async function verifyLive(human, video, { onState, signal, steps = 2, timeoutMs = 14000, plan: serverPlan } = {}) {
+  // 키오스크에서는 서버가 정해 준 챌린지 순서(plan)를 그대로 수행한다. 없으면(테스트 페이지 등) 여기서 무작위로 고른다.
+  const plan = Array.isArray(serverPlan) && serverPlan.length && serverPlan.every((c) => c in CHALLENGES) ? serverPlan : shuffle(Object.keys(CHALLENGES)).slice(0, steps);
   const t0 = performance.now();
   let phase = 'align'; let alignSince = 0; let stepIdx = 0;
   let realSum = 0, liveSum = 0, n = 0;
   const frontal = []; let firstEmb = null;
   let turn = { neg: false, pos: false };
   // 이 기기에서 /facetest 로 보정한 기준값이 있으면 사용 (키오스크 태블릿에서 한 번 보정하면 됨)
-  let calib = null; try { calib = JSON.parse(localStorage.getItem('sssms_facetest_calib') || 'null'); } catch {}
-  const tracker = new LivenessTracker(calib || {}); let blinksAtStep = 0; let lv = null;
+  // 보정값은 정해진 세 항목만, 정상 범위의 값만 받아들인다 (저장된 값을 고쳐 판별 기준을 꺼 버리는 것 방지)
+  const calib = {}; try {
+    const c = JSON.parse(localStorage.getItem('sssms_facetest_calib') || 'null') || {};
+    if (Number.isFinite(c.motionMin) && c.motionMin > 0) calib.motionMin = Math.max(0.004, c.motionMin);
+    if (Number.isFinite(c.textureMin) && c.textureMin > 0) calib.textureMin = Math.max(0.2, Math.min(1, c.textureMin));
+    if (['own', 'human'].includes(c.textureSource)) calib.textureSource = c.textureSource;
+  } catch {}
+  const tracker = new LivenessTracker(calib); let blinksAtStep = 0; let lv = null;
 
   while (true) {
     if (signal?.aborted) throw new Error('취소됨');
