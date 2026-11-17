@@ -35,6 +35,29 @@ export function countFail(key) {
 }
 setInterval(() => { const now = Date.now(); for (const [k, v] of hits) if (v.until <= now) hits.delete(k); }, 60000).unref();
 
+// ---------- 구글 인증 동시 작업 제한 ----------
+const GOOGLE_VERIFY_MAX_GLOBAL = 32;
+const GOOGLE_VERIFY_MAX_PER_IP = 8;
+let googleVerifyTotal = 0;
+const googleVerifyByIp = new Map();
+
+/** 동시 검증 자리를 예약하고, 성공하면 한 번만 호출할 해제 함수를 돌려준다. */
+export function reserveGoogleVerification(ip) {
+  ip = String(ip);
+  const perIp = googleVerifyByIp.get(ip) || 0;
+  if (googleVerifyTotal >= GOOGLE_VERIFY_MAX_GLOBAL || perIp >= GOOGLE_VERIFY_MAX_PER_IP) return null;
+  googleVerifyTotal++;
+  googleVerifyByIp.set(ip, perIp + 1);
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    googleVerifyTotal--;
+    const remaining = (googleVerifyByIp.get(ip) || 1) - 1;
+    if (remaining) googleVerifyByIp.set(ip, remaining); else googleVerifyByIp.delete(ip);
+  };
+}
+
 // ---------- 키오스크 접속 위치 제한 ----------
 // KIOSK_ALLOWED_IPS=203.0.113.7,198.51.100.0/24 처럼 학교 공인 IP를 적어 두면
 // 키오스크 계정은 그 IP(와 서버 컴퓨터 자체)에서만 쓸 수 있다 → 비밀번호·토큰이 새도 학교 밖에서 출석 처리 불가.

@@ -7,6 +7,51 @@ REPO="${REPO:-https://github.com/nanjjang/SSSMS.git}"
 BASE=/opt/sssms
 APP=$BASE/app
 NODE_MAJOR=22
+NODE_MIN_MINOR=5
+NODESOURCE_KEY_URL=https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+NODESOURCE_KEY_FINGERPRINT=6F71F525282841EEDAF851B42F59B5F99B1BE0B4
+CLOUDFLARE_KEY_URL=https://pkg.cloudflare.com/cloudflare-main.gpg
+CLOUDFLARE_KEY_FINGERPRINT=8E5F9A5D3A8F870C9A3D8C3D254B391D8CACCBF8
+KEY_WORKDIR=
+
+cleanup_key_workdir() {
+  if [ -n "$KEY_WORKDIR" ]; then rm -rf -- "$KEY_WORKDIR"; fi
+}
+trap cleanup_key_workdir EXIT
+
+# HTTPS로 받은 키가 저장소에서 검토한 단 하나의 기본 키인지 확인한 뒤에만 apt에 맡긴다.
+install_repository_key() {
+  local name=$1 url=$2 expected=$3 destination=$4
+  local downloaded gpg_home exported actual
+  if [ -z "$KEY_WORKDIR" ]; then KEY_WORKDIR="$(mktemp -d)"; fi
+  downloaded="$KEY_WORKDIR/$name.download"
+  gpg_home="$KEY_WORKDIR/$name-gnupg"
+  exported="$KEY_WORKDIR/$name.gpg"
+  mkdir --mode=0700 "$gpg_home"
+
+  curl --proto '=https' --tlsv1.2 -fsSL "$url" --output "$downloaded"
+  gpg --batch --quiet --homedir "$gpg_home" --import-options import-minimal --import "$downloaded"
+  actual="$(
+    gpg --batch --homedir "$gpg_home" --with-colons --list-keys |
+      awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print toupper($10); primary = 0 }'
+  )"
+  if [ "$actual" != "$expected" ]; then
+    echo "$name 저장소 키 지문이 일치하지 않습니다. 예상: $expected, 실제: ${actual:-없음}" >&2
+    return 1
+  fi
+
+  gpg --batch --quiet --homedir "$gpg_home" --export "$expected" > "$exported"
+  [ -s "$exported" ] || { echo "$name 저장소 키를 내보낼 수 없습니다" >&2; return 1; }
+  install -m 0644 "$exported" "$destination"
+}
+
+node_version_supported() {
+  command -v node >/dev/null && node -e '
+    const [major, minor] = process.versions.node.split(".").map(Number);
+    const [requiredMajor, requiredMinor] = process.argv.slice(1).map(Number);
+    process.exit(major > requiredMajor || (major === requiredMajor && minor >= requiredMinor) ? 0 : 1);
+  ' "$NODE_MAJOR" "$NODE_MIN_MINOR"
+}
 
 [ "$(id -u)" = 0 ] || { echo "sudo로 실행하세요"; exit 1; }
 
@@ -28,10 +73,15 @@ apt-get update -y
 apt-get install -y curl git ca-certificates gnupg
 
 echo "== 2. Node.js $NODE_MAJOR (node:sqlite 내장 버전 필요: 22.5 이상)"
-if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt "$NODE_MAJOR" ]; then
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
+if ! node_version_supported; then
+  mkdir -p --mode=0755 /usr/share/keyrings
+  install_repository_key nodesource "$NODESOURCE_KEY_URL" "$NODESOURCE_KEY_FINGERPRINT" /usr/share/keyrings/nodesource.gpg
+  ARCH="$(dpkg --print-architecture)"
+  echo "deb [arch=$ARCH signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  apt-get update -y
   apt-get install -y nodejs
 fi
+node_version_supported || { echo "Node.js $NODE_MAJOR.$NODE_MIN_MINOR 이상이 필요합니다" >&2; exit 1; }
 node -v
 
 echo "== 3. 전용 사용자와 폴더"
@@ -60,7 +110,7 @@ EOF
 echo "== 6. cloudflared"
 if ! command -v cloudflared >/dev/null; then
   mkdir -p --mode=0755 /usr/share/keyrings
-  curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+  install_repository_key cloudflare "$CLOUDFLARE_KEY_URL" "$CLOUDFLARE_KEY_FINGERPRINT" /usr/share/keyrings/cloudflare-main.gpg
   echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" > /etc/apt/sources.list.d/cloudflared.list
   apt-get update -y && apt-get install -y cloudflared
 fi

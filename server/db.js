@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS tokens (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_tokens_user_created ON tokens(user_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `);
 // migration: Google 계정 연동 컬럼

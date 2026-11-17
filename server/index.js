@@ -9,13 +9,15 @@ import { randomBytes, randomInt, createHash } from 'node:crypto';
 import { db, getSettings, hashPw, verifyPw, hashToken, DEFAULT_SETTINGS, WEAK_PASSWORDS } from './db.js';
 import { toVec, bestMatch, similarity } from './face.js';
 import { verifyGoogleIdToken, parseStudentProfile, sameName, GOOGLE_CLIENT_ID, SCHOOL_DOMAIN } from './google.js';
-import { isLocalDirect, isLocalDev, clientIp, tooMany, countFail, kioskIpAllowed, kioskIpRestricted } from './security.js';
+import { isLocalDirect, isLocalDev, clientIp, tooMany, countFail, reserveGoogleVerification, kioskIpAllowed, kioskIpRestricted } from './security.js';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const PORT = Number(process.env.PORT || 3000);
 // Cloudflare Tunnel 배포 시 외부 직접 접속을 막기 위해 기본은 로컬호스트에만 바인딩 (LAN 공개가 필요하면 HOST=0.0.0.0)
 const HOST = process.env.HOST || '127.0.0.1';
 const DAY = 86400000;
+const MAX_ACTIVE_TOKENS_PER_USER = 10;
+const SUCCESSFUL_AUTH_LIMIT = 20;
 
 // ---------- helpers ----------
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
@@ -40,6 +42,13 @@ async function body(req) {
 
 // 로그인 세션 유효 기간 (키오스크 기기는 만료 없이 두고, 비밀번호를 바꾸면 모두 로그아웃됨)
 const TOKEN_TTL = { admin: 7 * DAY, student: 30 * DAY };
+function pruneTokens(userId, keep) {
+  db.prepare(`DELETE FROM tokens WHERE user_id=? AND token IN
+    (SELECT token FROM tokens WHERE user_id=? ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?)`)
+    .run(userId, userId, keep);
+}
+for (const { user_id } of db.prepare('SELECT user_id FROM tokens GROUP BY user_id HAVING COUNT(*)>?').all(MAX_ACTIVE_TOKENS_PER_USER))
+  pruneTokens(user_id, MAX_ACTIVE_TOKENS_PER_USER);
 const bearer = (req) => (req.headers.authorization || '').replace(/^Bearer /, '');
 function auth(req, roles) {
   const t = bearer(req);
@@ -263,8 +272,17 @@ route('POST', '/api/login', async (req) => {
   return issueToken(u);
 });
 const issueToken = (u) => {
+  const successKey = `login-success:${u.id}`;
+  if (tooMany(successKey, SUCCESSFUL_AUTH_LIMIT)) fail(429, '로그인 시도가 너무 많습니다. 10분 뒤에 다시 시도해주세요');
+  countFail(successKey);
+  // 여러 기기 로그인은 허용하되, 가장 최근 세션만 남겨 계정 하나가 토큰 테이블을 무한히 키우지 못하게 한다.
   const token = randomBytes(24).toString('hex');
-  db.prepare('INSERT INTO tokens (token, user_id, created_at) VALUES (?,?,?)').run(hashToken(token), u.id, Date.now());
+  db.exec('BEGIN');
+  try {
+    db.prepare('INSERT INTO tokens (token, user_id, created_at) VALUES (?,?,?)').run(hashToken(token), u.id, Date.now());
+    pruneTokens(u.id, MAX_ACTIVE_TOKENS_PER_USER);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
   return { token, user: publicUser(u) };
 };
 const fixedSeatOf = (uid) => db.prepare("SELECT label FROM seats WHERE assigned_user_id=? AND type='fixed'").get(uid)?.label || null;
@@ -274,11 +292,25 @@ const pendingGoogle = new Map(); // 학번 추출 실패 시 1회 입력용 임�
 setInterval(() => { const now = Date.now(); for (const [k, v] of pendingGoogle) if (v.exp < now) pendingGoogle.delete(k); }, 60000).unref();
 route('POST', '/api/auth/google', async (req) => {
   const { credential, link_token, student_no } = await body(req);
-  const gKey = `google:${clientIp(req)}`;
+  const ip = clientIp(req); const gKey = `google:${ip}`;
   if (tooMany(gKey, 60)) fail(429, '로그인 시도가 너무 많습니다. 10분 뒤에 다시 시도해주세요');
+  countFail(gKey); // 성공 여부와 무관하게 외부 검증을 시작하기 전에 시도를 예약한다.
   let g;
-  if (link_token) { g = pendingGoogle.get(String(link_token)); pendingGoogle.delete(String(link_token)); if (!g || g.exp < Date.now()) { countFail(gKey); fail(400, '다시 로그인해주세요'); } }
-  else { try { g = await verifyGoogleIdToken(String(credential || '')); } catch (e) { countFail(gKey); throw e; } }
+  if (link_token) { g = pendingGoogle.get(String(link_token)); pendingGoogle.delete(String(link_token)); if (!g || g.exp < Date.now()) fail(400, '다시 로그인해주세요'); }
+  else {
+    const release = reserveGoogleVerification(ip);
+    if (!release) fail(429, '구글 로그인 요청이 너무 많습니다. 잠시 뒤에 다시 시도해주세요');
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    try {
+      req.once('aborted', abort); req.socket.once('close', abort);
+      if (req.aborted || req.socket.destroyed) abort();
+      g = await verifyGoogleIdToken(credential, { signal: controller.signal });
+    } finally {
+      req.off('aborted', abort); req.socket.off('close', abort);
+      release();
+    }
+  }
 
   // 1) 이미 연결된 계정
   let u = db.prepare('SELECT * FROM users WHERE google_sub=?').get(g.sub);
@@ -306,9 +338,8 @@ route('POST', '/api/auth/google', async (req) => {
     if (u && u.google_sub && u.google_sub !== g.sub) fail(409, '이 학번은 이미 다른 구글 계정과 연결되어 있습니다. 선생님께 문의하세요.');
     // 학번을 직접 입력했다면 선생님이 등록한 명단에 있어야 하고, 명단 이름과 구글 계정 이름이 같아야 연결한다.
     // (이전에는 구글 이름에 한글이 없으면 이름 확인을 건너뛰어 남의 학번을 가로챌 수 있었고, 명단에 없는 학번은 새 학생으로 선점할 수 있었음)
-    if (typed && !u) { countFail(gKey); fail(403, '명단에 없는 학번이에요. 학번을 확인하거나 선생님께 문의하세요.'); }
+    if (typed && !u) fail(403, '명단에 없는 학번이에요. 학번을 확인하거나 선생님께 문의하세요.');
     if (typed && !sameName(u.name, prof.name || g.name)) {
-      countFail(gKey);
       fail(403, '입력한 학번의 이름이 구글 계정 이름과 달라요. 학번을 확인하거나 선생님께 문의하세요.');
     }
     const name = u?.name || prof.name || g.name;
@@ -343,8 +374,9 @@ route('GET', '/api/seats', async (req) => {
   const u = auth(req);
   const s = getSettings();
   let seats = seatsWithStatus(u.id);
-  // 지정석 주인의 이름·ID는 관리자와 키오스크에만 보여준다
+  // 지정석 주인의 이름·ID는 관리자에게만 보여준다. 학생은 본인 배정 여부만, 키오스크는 좌석 선택에 필요한 상태만 받는다.
   if (u.role === 'student') seats = seats.map((x) => ({ ...x, assigned_name: null, assigned_user_id: x.assigned_user_id === u.id ? u.id : null }));
+  else if (u.role !== 'admin') seats = seats.map(({ id, label, type, x, y, occupied }) => ({ id, label, type, x, y, occupied }));
   return { seats, cols: +s.grid_cols, rows: +s.grid_rows };
 });
 
