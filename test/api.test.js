@@ -2,7 +2,7 @@ process.env.TZ = 'Asia/Seoul'; // 서버와 같은 시간대로 운영 시간을
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -207,6 +207,20 @@ test('요청 하나로 서버가 죽지 않고, public 밖 파일은 내주지 �
   assert.equal((await j('POST', '/api/login', null)).status, 401, '본문 없는 요청');
   assert.equal((await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'null' })).status, 400);
   assert.equal((await fetch(B + '/api/admin/attendance?date=x', { headers: { authorization: 'Bearer x' } })).status, 401);
+});
+
+test('정적 모델 HEAD는 메타데이터만, GET은 정확한 파일을 반환한다', async () => {
+  const expected = readFileSync(join(ROOT, 'public/models/facenet.onnx'));
+  const head = await fetch(B + '/models/facenet.onnx', { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('content-length'), String(expected.length));
+  assert.equal((await head.arrayBuffer()).byteLength, 0);
+
+  const get = await fetch(B + '/models/facenet.onnx');
+  const actual = Buffer.from(await get.arrayBuffer());
+  assert.equal(get.status, 200);
+  assert.equal(get.headers.get('content-length'), String(expected.length));
+  assert.equal(createHash('sha256').update(actual).digest('hex'), createHash('sha256').update(expected).digest('hex'));
 });
 
 test('학생에게는 다른 학생의 지정석 주인 정보가 보이지 않는다', async () => {
