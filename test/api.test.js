@@ -209,11 +209,14 @@ test('요청 하나로 서버가 죽지 않고, public 밖 파일은 내주지 �
   assert.equal((await fetch(B + '/api/admin/attendance?date=x', { headers: { authorization: 'Bearer x' } })).status, 401);
 });
 
-test('학생에게는 다른 학생의 지정석 주인 정보가 보이지 않는다', async () => {
+test('좌석 배정 신원은 관리자에게만 보이고 학생은 본인 표시만 받는다', async () => {
   const admin = (await j('POST', '/api/login', { login_id: 'admin', password: 'admin1234' })).body.token;
+  const kiosk = (await j('POST', '/api/login', { login_id: 'kiosk', password: 'kiosk1234' })).body.token;
   const st = (await j('POST', '/api/login', { login_id: '20006', password: '1234' })).body.token;
   const me = (await j('GET', '/api/me', null, st)).body.user;
   assert.ok((await j('GET', '/api/seats', null, admin)).body.seats.some((s) => s.assigned_name));
+  for (const s of (await j('GET', '/api/seats', null, kiosk)).body.seats)
+    assert.deepEqual(Object.keys(s).sort(), ['id', 'label', 'occupied', 'type', 'x', 'y']);
   for (const s of (await j('GET', '/api/seats', null, st)).body.seats) {
     assert.equal(s.assigned_name, null);
     assert.ok(s.assigned_user_id == null || s.assigned_user_id === me.id);

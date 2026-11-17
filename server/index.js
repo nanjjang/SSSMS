@@ -342,8 +342,9 @@ route('GET', '/api/seats', async (req) => {
   const u = auth(req);
   const s = getSettings();
   let seats = seatsWithStatus(u.id);
-  // 지정석 주인의 이름·ID는 관리자와 키오스크에만 보여준다
+  // 지정석 주인의 이름·ID는 관리자에게만 보여준다. 학생은 본인 배정 여부만, 키오스크는 좌석 선택에 필요한 상태만 받는다.
   if (u.role === 'student') seats = seats.map((x) => ({ ...x, assigned_name: null, assigned_user_id: x.assigned_user_id === u.id ? u.id : null }));
+  else if (u.role !== 'admin') seats = seats.map(({ id, label, type, x, y, occupied }) => ({ id, label, type, x, y, occupied }));
   return { seats, cols: +s.grid_cols, rows: +s.grid_rows };
 });
 
