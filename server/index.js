@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, randomInt, createHash } from 'node:crypto';
 import { db, getSettings, hashPw, verifyPw, hashToken, DEFAULT_SETTINGS, WEAK_PASSWORDS } from './db.js';
 import { toVec, bestMatch, similarity } from './face.js';
-import { verifyGoogleIdToken, parseStudentProfile, GOOGLE_CLIENT_ID, SCHOOL_DOMAIN } from './google.js';
+import { verifyGoogleIdToken, parseStudentProfile, sameName, GOOGLE_CLIENT_ID, SCHOOL_DOMAIN } from './google.js';
 import { isLocalDirect, isLocalDev, clientIp, tooMany, countFail, kioskIpAllowed, kioskIpRestricted } from './security.js';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -47,9 +47,13 @@ function auth(req, roles) {
   const ttl = TOKEN_TTL[row.role];
   if (ttl && Date.now() - row.token_at > ttl) { db.prepare('DELETE FROM tokens WHERE token=?').run(hashToken(t)); fail(401, '로그인이 만료되었습니다. 다시 로그인해주세요'); }
   if (row.role === 'kiosk' && !kioskIpAllowed(req)) fail(403, '허용된 장소에서만 키오스크를 사용할 수 있습니다');
+  if (revokedGoogleAdmin(row)) fail(403, '관리자 권한이 해제된 계정입니다');
   if (roles && !roles.includes(row.role)) fail(403, '권한이 없습니다');
   return row;
 }
+// 설정의 '관리자 구글 계정'에서 빠진 이메일은 이미 로그인한 세션까지 바로 관리자 권한을 잃는다
+const adminEmails = () => getSettings().admin_emails.split(/[,\s]+/).filter(Boolean).map((e) => e.toLowerCase());
+const revokedGoogleAdmin = (u) => u.role === 'admin' && !!u.google_sub && !adminEmails().includes(String(u.email || '').toLowerCase());
 setInterval(() => {
   for (const [role, ttl] of Object.entries(TOKEN_TTL))
     db.prepare('DELETE FROM tokens WHERE created_at<? AND user_id IN (SELECT id FROM users WHERE role=?)').run(Date.now() - ttl, role);
@@ -250,8 +254,10 @@ route('POST', '/api/login', async (req) => {
     fail(401, '아이디 또는 비밀번호가 올바르지 않습니다');
   }
   if (u.role === 'student' && GOOGLE_CLIENT_ID && process.env.ALLOW_PASSWORD_LOGIN !== '1') fail(403, '학생은 학교 구글 계정으로 로그인해주세요');
-  if (u.role !== 'student' && WEAK_PASSWORDS.includes(String(password)) && !isLocalDirect(req))
-    fail(403, '초기 비밀번호로는 외부에서 로그인할 수 없습니다. 서버 컴퓨터에서 비밀번호를 먼저 바꿔주세요');
+  // 누구나 아는 초기 비밀번호(데모 학생 1234 포함)로는 외부에서 로그인할 수 없다 — 학번은 순서대로라 쉽게 추측됨
+  if (WEAK_PASSWORDS.includes(String(password)) && !isLocalDirect(req))
+    fail(403, u.role === 'student' ? '초기 비밀번호로는 로그인할 수 없습니다. 선생님께 비밀번호 재설정을 요청하세요'
+      : '초기 비밀번호로는 외부에서 로그인할 수 없습니다. 서버 컴퓨터에서 비밀번호를 먼저 바꿔주세요');
   if (u.role === 'kiosk' && !kioskIpAllowed(req)) fail(403, '허용된 장소에서만 키오스크를 사용할 수 있습니다');
   return issueToken(u);
 });
@@ -265,7 +271,6 @@ const fixedSeatOf = (uid) => db.prepare("SELECT label FROM seats WHERE assigned_
 // 학교 구글 계정 로그인: 학번·이름 자동 추출 → 관리자가 등록한 학생(학번)과 연결 → 지정석 자동 반영
 const pendingGoogle = new Map(); // 학번 추출 실패 시 1회 입력용 임시 토큰
 setInterval(() => { const now = Date.now(); for (const [k, v] of pendingGoogle) if (v.exp < now) pendingGoogle.delete(k); }, 60000).unref();
-const korean = (s) => String(s || '').replace(/[^가-힣]/g, '');
 route('POST', '/api/auth/google', async (req) => {
   const { credential, link_token, student_no } = await body(req);
   const gKey = `google:${clientIp(req)}`;
@@ -276,9 +281,9 @@ route('POST', '/api/auth/google', async (req) => {
 
   // 1) 이미 연결된 계정
   let u = db.prepare('SELECT * FROM users WHERE google_sub=?').get(g.sub);
+  if (u && revokedGoogleAdmin(u)) fail(403, '관리자 권한이 해제된 계정입니다');
   // 2) 관리자 이메일 → 관리자 계정
-  const admins = getSettings().admin_emails.split(/[,\s]+/).filter(Boolean).map((e) => e.toLowerCase());
-  if (!u && admins.includes(g.email)) {
+  if (!u && adminEmails().includes(g.email)) {
     u = db.prepare("SELECT * FROM users WHERE role='admin' AND email=?").get(g.email);
     if (!u) {
       const r = db.prepare("INSERT INTO users (role, login_id, name, pw_hash, email, google_sub, created_at) VALUES ('admin',?,?,?,?,?,?)").run(g.email, g.name || g.email, hashPw(randomBytes(16).toString('hex')), g.email, g.sub, Date.now());
@@ -298,8 +303,10 @@ route('POST', '/api/auth/google', async (req) => {
     }
     u = db.prepare("SELECT * FROM users WHERE role='student' AND login_id=?").get(no);
     if (u && u.google_sub && u.google_sub !== g.sub) fail(409, '이 학번은 이미 다른 구글 계정과 연결되어 있습니다. 선생님께 문의하세요.');
-    // 학번을 직접 입력했다면 명단의 이름과 구글 계정 이름이 같아야 연결 (다른 학생 학번 입력 방지)
-    if (u && typed && korean(u.name) && korean(prof.name) && korean(u.name) !== korean(prof.name)) {
+    // 학번을 직접 입력했다면 선생님이 등록한 명단에 있어야 하고, 명단 이름과 구글 계정 이름이 같아야 연결한다.
+    // (이전에는 구글 이름에 한글이 없으면 이름 확인을 건너뛰어 남의 학번을 가로챌 수 있었고, 명단에 없는 학번은 새 학생으로 선점할 수 있었음)
+    if (typed && !u) { countFail(gKey); fail(403, '명단에 없는 학번이에요. 학번을 확인하거나 선생님께 문의하세요.'); }
+    if (typed && !sameName(u.name, prof.name || g.name)) {
       countFail(gKey);
       fail(403, '입력한 학번의 이름이 구글 계정 이름과 달라요. 학번을 확인하거나 선생님께 문의하세요.');
     }
@@ -668,7 +675,8 @@ route('POST', '/api/kiosk/checkout', async (req) => {
 // ---------- static ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
 // 모든 응답 공통 보안 헤더: MIME 추측 금지, 다른 사이트의 iframe 삽입(클릭재킹) 금지, 외부로 주소 노출 금지, 카메라는 이 사이트에서만
-const SEC_HEADERS = { 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'same-origin', 'permissions-policy': 'camera=(self), microphone=(), geolocation=()' };
+// CSP는 화면을 깨뜨리지 않는 항목만: iframe 삽입 금지, 플러그인 금지, <base> 주입으로 스크립트 경로 바꾸기 금지
+const SEC_HEADERS = { 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'same-origin', 'permissions-policy': 'camera=(self), microphone=(), geolocation=()', 'content-security-policy': "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" };
 async function serveStatic(req, res, pathname) {
   const send = (status, text) => { res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' }); res.end(text); };
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(405, 'Method not allowed');

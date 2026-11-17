@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { similarity, bestMatch } from '../server/face.js';
-import { parseStudentProfile } from '../server/google.js';
+import { parseStudentProfile, sameName } from '../server/google.js';
+import { createHash } from 'node:crypto';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3999; const B = `http://localhost:${PORT}`;
@@ -263,4 +264,40 @@ test('비밀번호 변경: 약한 비밀번호 거부, 변경 시 다른 로그�
   assert.equal((await j('PUT', '/api/admin/settings', { close_time: '25:99' }, admin)).status, 400);
   assert.equal((await j('PUT', '/api/admin/settings', { match_threshold: '0' }, admin)).status, 400);
   assert.equal((await j('PUT', '/api/admin/settings', { close_time: '22:30', match_threshold: '0.6' }, admin)).status, 200);
+});
+
+test('구글 로그인 학번 직접 입력: 이름을 확인할 수 없으면 연결하지 않는다', () => {
+  assert.ok(sameName('홍길동', '홍길동'));
+  assert.ok(sameName('홍길동', '20105 홍길동'));
+  assert.ok(!sameName('홍길동', '김철수'));
+  // 이전에는 구글 이름에 한글이 없으면 확인을 건너뛰어 남의 학번에 연결할 수 있었다
+  assert.ok(!sameName('홍길동', 'Attacker Kim'));
+  assert.ok(!sameName('홍길동', ''));
+  assert.ok(!sameName('', ''));
+  assert.ok(sameName('John Smith', 'john smith'));
+});
+
+test('데모 학생의 초기 비밀번호(1234)로는 외부에서 로그인할 수 없다', async () => {
+  assert.equal((await j('POST', '/api/login', { login_id: '20001', password: '1234' }, null, { 'cf-connecting-ip': '203.0.113.20' })).status, 403);
+  assert.equal((await j('POST', '/api/login', { login_id: '20001', password: '1234' })).status, 200, '서버 컴퓨터에서는 가능 (개발용)');
+});
+
+test('관리자 구글 계정 목록에서 빠지면 로그인돼 있던 세션도 관리자 권한을 잃는다', async () => {
+  const admin = (await j('POST', '/api/login', { login_id: 'admin', password: 'admin1234' })).body.token;
+  const email = 'teacher@sunrint.hs.kr'; const token = 'g'.repeat(48);
+  const db = new DatabaseSync(join(dir, 't.db'));
+  const r = db.prepare("INSERT INTO users (role, login_id, name, pw_hash, email, google_sub, created_at) VALUES ('admin',?,?,?,?,?,?)").run(email, '선생님', 'x:y', email, 'sub-teacher', Date.now());
+  db.prepare('INSERT INTO tokens (token, user_id, created_at) VALUES (?,?,?)').run(createHash('sha256').update(token).digest('hex'), r.lastInsertRowid, Date.now());
+  db.close();
+  assert.equal((await j('PUT', '/api/admin/settings', { admin_emails: email }, admin)).status, 200);
+  assert.equal((await j('GET', '/api/admin/users', null, token)).status, 200);
+  assert.equal((await j('PUT', '/api/admin/settings', { admin_emails: 'other@sunrint.hs.kr' }, admin)).status, 200);
+  assert.equal((await j('GET', '/api/admin/users', null, token)).status, 403, '목록에서 빠진 관리자');
+  assert.equal((await j('GET', '/api/admin/users', null, admin)).status, 200, '비밀번호 관리자 계정은 영향 없음');
+});
+
+test('보안 헤더: 다른 사이트 iframe 삽입·<base> 주입 차단', async () => {
+  const r = await fetch(B + '/student/');
+  assert.match(r.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
+  assert.match(r.headers.get('content-security-policy') || '', /base-uri 'self'/);
 });

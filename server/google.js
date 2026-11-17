@@ -22,6 +22,16 @@ export async function verifyGoogleIdToken(idToken) {
 }
 
 /**
+ * 명단 이름과 구글 계정 이름이 같은 사람인지 (한글이 있으면 한글만, 없으면 영문자만 비교).
+ * 어느 한쪽이라도 비교할 글자가 없으면 false → 확인할 수 없는 경우는 연결하지 않는다.
+ */
+export function sameName(a, b) {
+  const norm = (s) => { s = String(s || ''); return s.replace(/[^가-힣]/g, '') || s.toLowerCase().replace(/[^a-z]/g, ''); };
+  const x = norm(a), y = norm(b);
+  return !!x && x === y;
+}
+
+/**
  * 학교 구글 계정 프로필에서 학번·이름 추출.
  * 학교 계정은 보통 표시이름이 "20105 홍길동" / "홍길동(20105)" 형태이거나 이메일 아이디에 학번이 들어있음.
  * 학번: 5자리(학년1+반2+번호2). 추출 실패 시 null → 학생이 1회 직접 입력.

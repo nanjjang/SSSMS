@@ -19,6 +19,8 @@ ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/opt/sssms/data /opt/sssms/app/ml/data
 MemoryMax=512M
+# DB(학생 개인정보·얼굴 특징값·비밀번호 해시)와 학습용 얼굴 사진을 다른 사용자가 읽지 못하게
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

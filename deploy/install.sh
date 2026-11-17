@@ -12,6 +12,12 @@ NODE_MAJOR=22
 
 if [ "${1:-}" = "update" ]; then
   sudo -u sssms git -C "$APP" pull --ff-only
+  # 서비스 설정(UMask 등)과 데이터 폴더 권한도 최신으로 맞춘다
+  cp "$APP/deploy/sssms.service" /etc/systemd/system/sssms.service
+  systemctl daemon-reload
+  chmod 700 "$BASE/data" "$BASE/backups"
+  chmod -R go-rwx "$BASE/data" "$BASE/backups"
+  [ -d "$APP/ml/data" ] && chmod -R go-rwx "$APP/ml/data"
   systemctl restart sssms
   systemctl --no-pager status sssms | head -5
   exit 0
@@ -35,6 +41,9 @@ if [ ! -d "$APP/.git" ]; then git clone "$REPO" "$APP"; fi
 mkdir -p "$APP/ml/data/liveness/real" "$APP/ml/data/liveness/spoof"
 [ -f "$BASE/.env" ] || { cp "$APP/deploy/.env.example" "$BASE/.env"; chmod 600 "$BASE/.env"; echo "!! $BASE/.env 를 열어 비밀번호와 구글 클라이언트 ID를 채우세요"; }
 chown -R sssms:sssms "$BASE"
+# 데이터·백업·학습용 얼굴 사진 폴더는 서비스 계정만 접근 (기존 설치의 파일 권한도 함께 바로잡음)
+chmod 700 "$BASE/data" "$BASE/backups" "$APP/ml/data"
+chmod -R go-rwx "$BASE/data" "$BASE/backups" "$APP/ml/data"
 
 echo "== 4. systemd 서비스"
 cp "$APP/deploy/sssms.service" /etc/systemd/system/sssms.service
