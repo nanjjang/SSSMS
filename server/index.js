@@ -1,8 +1,9 @@
 process.env.TZ ||= 'Asia/Seoul';
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { readdirSync, mkdirSync, writeFileSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { createReadStream, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname, extname, normalize, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, randomInt, createHash } from 'node:crypto';
 import { db, getSettings, hashPw, verifyPw, hashToken, DEFAULT_SETTINGS, WEAK_PASSWORDS } from './db.js';
@@ -709,8 +710,30 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 // 모든 응답 공통 보안 헤더: MIME 추측 금지, 다른 사이트의 iframe 삽입(클릭재킹) 금지, 외부로 주소 노출 금지, 카메라는 이 사이트에서만
 // CSP는 화면을 깨뜨리지 않는 항목만: iframe 삽입 금지, 플러그인 금지, <base> 주입으로 스크립트 경로 바꾸기 금지
 const SEC_HEADERS = { 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'same-origin', 'permissions-policy': 'camera=(self), microphone=(), geolocation=()', 'content-security-policy': "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" };
+const LARGE_STATIC_BYTES = 1024 * 1024;
+const STATIC_STREAM_BUFFER_BYTES = 64 * 1024;
+const MAX_LARGE_STATIC = 32;
+const MAX_LARGE_STATIC_PER_IP = 8;
+let activeLargeStatic = 0;
+const activeLargeStaticByIp = new Map();
+
+function reserveLargeStatic(req, size) {
+  if (size < LARGE_STATIC_BYTES) return () => {};
+  const ip = clientIp(req); const activeForIp = activeLargeStaticByIp.get(ip) || 0;
+  if (activeLargeStatic >= MAX_LARGE_STATIC || activeForIp >= MAX_LARGE_STATIC_PER_IP) return null;
+  activeLargeStatic++;
+  activeLargeStaticByIp.set(ip, activeForIp + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true; activeLargeStatic--;
+    const remaining = (activeLargeStaticByIp.get(ip) || 1) - 1;
+    if (remaining) activeLargeStaticByIp.set(ip, remaining); else activeLargeStaticByIp.delete(ip);
+  };
+}
+
 async function serveStatic(req, res, pathname) {
-  const send = (status, text) => { res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' }); res.end(text); };
+  const send = (status, text, headers = {}) => { res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', ...headers }); res.end(text); };
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(405, 'Method not allowed');
   if (pathname === '/') { res.writeHead(302, { location: '/student/' }); return res.end(); }
   let rel; try { rel = decodeURIComponent(pathname); } catch { return send(400, 'Bad request'); }
@@ -719,11 +742,22 @@ async function serveStatic(req, res, pathname) {
   let p = normalize(join(PUBLIC, rel));
   if (p !== PUBLIC && !p.startsWith(PUBLIC + sep)) return send(403, 'Forbidden'); // public 밖(이름이 public으로 시작하는 옆 폴더 포함) 차단
   try {
-    if ((await stat(p)).isDirectory()) p = join(p, 'index.html');
-    const data = await readFile(p);
-    res.writeHead(200, { 'content-type': MIME[extname(p)] || 'application/octet-stream', 'cache-control': 'no-cache' });
-    res.end(req.method === 'HEAD' ? undefined : data);
-  } catch { send(404, 'Not found'); }
+    let info = await stat(p);
+    if (info.isDirectory()) { p = join(p, 'index.html'); info = await stat(p); }
+    if (!info.isFile()) return send(404, 'Not found');
+    const headers = { 'content-type': MIME[extname(p)] || 'application/octet-stream', 'cache-control': 'no-cache', 'content-length': String(info.size) };
+    if (req.method === 'HEAD') { res.writeHead(200, headers); return res.end(); }
+
+    const release = reserveLargeStatic(req, info.size);
+    if (!release) return send(503, 'Server busy', { 'retry-after': '1' });
+    try {
+      res.writeHead(200, headers);
+      await pipeline(createReadStream(p, { highWaterMark: STATIC_STREAM_BUFFER_BYTES }), res);
+    } finally { release(); }
+  } catch {
+    if (res.headersSent) { if (!res.destroyed) res.destroy(); return; }
+    send(404, 'Not found');
+  }
 }
 
 createServer(async (req, res) => {
