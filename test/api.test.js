@@ -9,6 +9,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { similarity, bestMatch } from '../server/face.js';
 import { parseStudentProfile, sameName } from '../server/google.js';
+import { reserveGoogleVerification } from '../server/security.js';
 import { createHash } from 'node:crypto';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -242,6 +243,24 @@ test('로그인 보호: 교차 출처 요청·초기 비밀번호 외부 로그�
   assert.equal((await j('POST', '/api/login', { login_id: '20008', password: '1234' })).status, 200, '다른 계정은 영향 없음');
 });
 
+test('성공한 로그인을 제한하고 계정별 최근 세션 열 개만 유지한다', async () => {
+  const admin = (await j('POST', '/api/login', { login_id: 'admin', password: 'admin1234' })).body.token;
+  const login_id = '39902'; const password = 'session-limit-password';
+  assert.equal((await j('POST', '/api/admin/users', { login_id, name: '세션학생', password }, admin)).status, 200);
+  const tokens = [];
+  for (let i = 0; i < 20; i++) {
+    const r = await j('POST', '/api/login', { login_id, password });
+    assert.equal(r.status, 200); tokens.push(r.body.token);
+  }
+  assert.equal((await j('POST', '/api/login', { login_id, password })).status, 429);
+  const db = new DatabaseSync(join(dir, 't.db'), { readOnly: true });
+  const count = db.prepare('SELECT COUNT(*) c FROM tokens WHERE user_id=(SELECT id FROM users WHERE login_id=?)').get(login_id).c;
+  db.close();
+  assert.equal(count, 10);
+  assert.equal((await j('GET', '/api/me', null, tokens[0])).status, 401, '가장 오래된 세션은 해제');
+  assert.equal((await j('GET', '/api/me', null, tokens.at(-1))).status, 200, '최근 세션은 유지');
+});
+
 test('비밀번호 변경: 약한 비밀번호 거부, 변경 시 다른 로그인 세션 종료', async () => {
   const admin = (await j('POST', '/api/login', { login_id: 'admin', password: 'admin1234' })).body.token;
   const a = (await j('POST', '/api/login', { login_id: '20004', password: '1234' })).body.token;
@@ -278,6 +297,23 @@ test('구글 로그인 학번 직접 입력: 이름을 확인할 수 없으면 �
   assert.ok(!sameName('홍길동', ''));
   assert.ok(!sameName('', ''));
   assert.ok(sameName('John Smith', 'john smith'));
+});
+
+test('구글 검증 동시 작업은 IP별·전체 한도를 지키고 자리를 반환한다', () => {
+  const perIp = Array.from({ length: 8 }, () => reserveGoogleVerification('203.0.113.10'));
+  assert.ok(perIp.every((release) => typeof release === 'function'));
+  assert.equal(reserveGoogleVerification('203.0.113.10'), null);
+  perIp.pop()();
+  const replacement = reserveGoogleVerification('203.0.113.10');
+  assert.equal(typeof replacement, 'function');
+  for (const release of [...perIp, replacement]) release();
+
+  const global = Array.from({ length: 32 }, (_, i) => reserveGoogleVerification(`198.51.100.${i}`));
+  assert.ok(global.every((release) => typeof release === 'function'));
+  assert.equal(reserveGoogleVerification('192.0.2.1'), null);
+  for (const release of global) release();
+  const recovered = reserveGoogleVerification('192.0.2.1');
+  assert.equal(typeof recovered, 'function'); recovered();
 });
 
 test('데모 학생의 초기 비밀번호(1234)로는 외부에서 로그인할 수 없다', async () => {

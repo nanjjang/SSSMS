@@ -3,12 +3,29 @@
 // - 서버: Google tokeninfo 엔드포인트로 서명/만료 검증 후 aud(클라이언트ID)·hd(학교 도메인)·email_verified 확인
 export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 export const SCHOOL_DOMAIN = process.env.SCHOOL_DOMAIN || 'sunrint.hs.kr';
+const MAX_ID_TOKEN_LENGTH = 8192;
+const TOKENINFO_TIMEOUT_MS = 5000;
 
-export async function verifyGoogleIdToken(idToken) {
+export async function verifyGoogleIdToken(idToken, { signal } = {}) {
   if (!GOOGLE_CLIENT_ID) throw Object.assign(new Error('GOOGLE_CLIENT_ID가 설정되지 않았습니다'), { status: 503 });
-  const r = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
-  if (!r.ok) throw Object.assign(new Error('구글 인증에 실패했습니다'), { status: 401 });
-  const p = await r.json();
+  idToken = String(idToken || '');
+  if (!idToken || idToken.length > MAX_ID_TOKEN_LENGTH)
+    throw Object.assign(new Error('잘못된 구글 인증 정보입니다'), { status: 400 });
+
+  const url = new URL('https://oauth2.googleapis.com/tokeninfo');
+  url.searchParams.set('id_token', idToken);
+  const deadline = AbortSignal.timeout(TOKENINFO_TIMEOUT_MS);
+  const fetchSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  let r; let p;
+  try {
+    r = await fetch(url, { signal: fetchSignal });
+    if (!r.ok) throw Object.assign(new Error('구글 인증에 실패했습니다'), { status: 401 });
+    p = await r.json();
+  } catch (e) {
+    if (signal?.aborted) throw Object.assign(new Error('요청이 취소되었습니다'), { status: 408 });
+    if (deadline.aborted) throw Object.assign(new Error('구글 인증 시간이 초과되었습니다'), { status: 504 });
+    throw e;
+  }
   if (p.aud !== GOOGLE_CLIENT_ID) throw Object.assign(new Error('잘못된 클라이언트'), { status: 401 });
   if (!['accounts.google.com', 'https://accounts.google.com'].includes(p.iss)) throw Object.assign(new Error('잘못된 발급자'), { status: 401 });
   if (String(p.email_verified) !== 'true') throw Object.assign(new Error('이메일 인증이 필요한 계정입니다'), { status: 401 });
