@@ -1,4 +1,5 @@
 import { createApi, h, fmtDate, toast, modal, renderSeatMap, LOGO } from '/common/api.js';
+import { isNative, nativeGoogleIdToken, nativeGoogleSignOut } from '/common/native.js';
 
 const api = createApi('student');
 const app = document.getElementById('app');
@@ -68,6 +69,16 @@ async function renderLogin() {
     catch (err) { toast(err.message, 'error'); }
   });
   if (!authCfg.google_client_id) { app.querySelector('#gbtn').remove(); return; }
+  if (isNative()) { // 앱: WebView 에서는 구글 웹 로그인이 막히므로 네이티브 로그인 사용
+    const box = app.querySelector('#gbtn');
+    box.innerHTML = '<button class="btn primary block" type="button"><i class="ti ti-brand-google"></i> 학교 구글 계정으로 계속하기</button>';
+    box.querySelector('button').onclick = async (ev) => {
+      const b = ev.currentTarget; b.disabled = true;
+      try { await finishGoogle(await api.post('/api/auth/google', { credential: await nativeGoogleIdToken(authCfg) })); }
+      catch (err) { if (!/cancel/i.test(err?.message || '')) toast(err.message || '로그인에 실패했어요', 'error'); b.disabled = false; }
+    };
+    return;
+  }
   try {
     await loadGsi();
     google.accounts.id.initialize({
@@ -233,7 +244,7 @@ function mySheet() {
     <div class="sgroup"><button type="button" class="srow-btn bad" id="lo">로그아웃</button></div>`, {
     onMount: (m, close) => m.querySelector('#lo').onclick = async () => {
       if (!await iosAlert({ title: '로그아웃', message: '이 기기에서 로그아웃할까요?', ok: '로그아웃', destructive: true })) return;
-      close(); await api.logout(); try { google.accounts.id.disableAutoSelect(); } catch {} renderLogin();
+      close(); await api.logout(); try { google.accounts.id.disableAutoSelect(); } catch {} nativeGoogleSignOut(); renderLogin();
     },
   });
 }

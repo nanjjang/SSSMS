@@ -350,7 +350,7 @@ route('POST', '/api/auth/google', async (req) => {
   }
   return { ...issueToken(u), fixed_seat: fixedSeatOf(u.id) };
 });
-route('GET', '/api/auth/config', async () => ({ google_client_id: GOOGLE_CLIENT_ID, school_domain: SCHOOL_DOMAIN, password_login: !GOOGLE_CLIENT_ID || process.env.ALLOW_PASSWORD_LOGIN === '1' }));
+route('GET', '/api/auth/config', async () => ({ google_client_id: GOOGLE_CLIENT_ID, google_ios_client_id: process.env.GOOGLE_IOS_CLIENT_ID || '', school_domain: SCHOOL_DOMAIN, password_login: !GOOGLE_CLIENT_ID || process.env.ALLOW_PASSWORD_LOGIN === '1' }));
 
 route('POST', '/api/logout', async (req) => {
   db.prepare('DELETE FROM tokens WHERE token=?').run(hashToken(bearer(req))); return { ok: true };

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">선린 야자실</string>
+    <string name="title_activity_main">선린 야자실</string>
+    <string name="package_name">kr.hs.sunrint.yaja</string>
+    <string name="custom_url_scheme">kr.hs.sunrint.yaja</string>
+</resources>

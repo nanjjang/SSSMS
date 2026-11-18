@@ -1,5 +1,8 @@
 import { createApi, LOGO, h, fmtMin, fmtTime, toast, renderSeatMap } from '/common/api.js';
 import { loadHuman, startCamera, verifyLive } from '/common/face.js';
+import { keepScreenOn } from '/common/native.js';
+
+keepScreenOn(); // 앱: 화면 꺼짐 방지
 
 const api = createApi('kiosk');
 const app = document.getElementById('app');
