@@ -1,19 +1,19 @@
-html, body { height: 100%; overflow: hidden; background: var(--surface); user-select: none; -webkit-user-select: none; }
+html, body { height: 100%; overflow: hidden; background: var(--bg); user-select: none; -webkit-user-select: none; }
 #app { height: 100%; display: flex; flex-direction: column; }
-.t1 { font-size: clamp(30px, 4.2vh, 44px); line-height: 1.3; font-weight: 700; letter-spacing: -0.03em; text-align: center; }
+.t1 { font-size: clamp(32px, 4.6vh, 48px); line-height: 1.25; font-weight: 700; letter-spacing: -0.04em; text-align: center; }
 .sub { margin-top: 12px; font-size: clamp(17px, 2.2vh, 22px); line-height: 1.5; color: var(--text-2); text-align: center; }
 
 /* 상단 */
-.top { border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; padding: 14px clamp(16px, 4vw, 40px); }
-.who { display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+.top { background: var(--glass); -webkit-backdrop-filter: saturate(180%) blur(24px); backdrop-filter: saturate(180%) blur(24px); border-bottom: .5px solid var(--line); display: flex; justify-content: space-between; align-items: center; padding: 14px clamp(16px, 4vw, 40px); }
+.who { display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 700; letter-spacing: -0.025em; }
 .who img { width: 40px; height: 40px; border-radius: 50%; }
 @media (prefers-color-scheme: dark) { .who img, .lg-logo { background: #fff; padding: 3px; } }
-.clock { font-size: 24px; font-weight: 600; color: var(--text-2); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.clock { font-size: 26px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 
 /* 상태 줄 */
-.kbnr { display: flex; align-items: center; gap: 24px; padding: 14px clamp(16px, 4vw, 40px); border-top: 1px solid var(--line); background: var(--surface); font-size: clamp(14px, 2vw, 18px); color: var(--text-2); }
+.kbnr { display: flex; align-items: center; gap: 24px; padding: 14px clamp(16px, 4vw, 40px); border-top: .5px solid var(--line); background: var(--surface); font-size: clamp(14px, 2vw, 18px); color: var(--text-2); }
 .kbnr b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; margin-left: 6px; }
-.kbnr.in { margin: 0 0 24px; border-top: 0; background: var(--primary-soft); color: var(--primary-ink); }
+.kbnr.in { margin: 0 0 24px; border-top: 0; border-radius: var(--r-xl); background: var(--primary-soft); color: var(--primary-ink); }
 .kbnr.in b { color: var(--primary-ink); margin: 0; }
 .kbnr.in .ti { font-size: 24px; }
 
@@ -27,7 +27,7 @@ html, body { height: 100%; overflow: hidden; background: var(--surface); user-se
 .cam video { z-index: 1; }
 .cam[data-mode=error] video { visibility: hidden; }
 .ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; z-index: 2; }
-.ring circle { fill: none; stroke-width: 2.4; }
+.ring circle { fill: none; stroke-width: 3; }
 .ring .bg { stroke: var(--line); }
 .ring .fg { stroke: var(--primary); stroke-linecap: round; transition: stroke-dashoffset .5s var(--ease), stroke .3s; }
 .cam[data-mode=warn] .fg { stroke: var(--danger); }
@@ -51,18 +51,18 @@ html, body { height: 100%; overflow: hidden; background: var(--surface); user-se
 .phead { margin-bottom: 20px; }
 .phead .t1 { text-align: left; }
 
-.badge-ic { width: 112px; height: 112px; border-radius: var(--r-xl); display: grid; place-items: center; margin-bottom: 24px; }
+.badge-ic { width: 120px; height: 120px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 24px; }
 .badge-ic.ok { color: var(--ok); background: var(--ok-soft); } .badge-ic.bad { color: var(--danger); background: var(--danger-soft); }
 .badge-ic svg { width: 60px; height: 60px; fill: none; stroke: currentColor; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
-.list { width: min(560px, 100%); margin-top: 40px; padding: 0 8px; border-block: 1px solid var(--line); }
+.list { width: min(560px, 100%); margin-top: 40px; padding: 4px 24px; border-radius: var(--r-xl); background: var(--surface); }
 .list div { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; padding: 18px 0; font-size: 20px; line-height: 1.4; }
-.list div + div { border-top: 1px solid var(--line); }
+.list div + div { border-top: .5px solid var(--line); }
 .list span { color: var(--text-2); flex: none; } .list b { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
 .list.big { width: 100%; }
 .list.big div { font-size: 22px; padding: 22px 0; }
 
 /* 좌석 선택 */
-.front { text-align: center; font-size: 15px; color: var(--text-3); padding-bottom: 10px; margin-bottom: 20px; border-bottom: 2px solid var(--line); }
+.front { text-align: center; font-size: 15px; color: var(--text-3); padding-bottom: 10px; margin-bottom: 20px; border-bottom: 2px solid var(--line); letter-spacing: 0; }
 .pmap { flex: 1; min-height: 0; overflow: auto; }
 .pmap.seatmap { gap: 10px; align-content: start; }
 .pmap .cell { font-size: clamp(14px, 2vw, 18px) !important; border-radius: var(--r-md) !important; }
@@ -71,18 +71,18 @@ html, body { height: 100%; overflow: hidden; background: var(--surface); user-se
 .legend.k .sw { width: 16px; height: 16px; border-radius: 5px; }
 
 .bar2 { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
-.kbtn { height: 72px; border: 0; border-radius: var(--r-xl); font-size: 22px; font-weight: 600; background: var(--surface-2); color: var(--text); cursor: pointer; transition: transform .1s, background .15s; }
-.kbtn:active { transform: scale(.98); background: var(--surface-3); }
+.kbtn { height: 72px; border: 0; border-radius: 36px; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; background: var(--surface-3); color: var(--text); cursor: pointer; transition: transform .1s, background .15s; }
+.kbtn:active { transform: scale(.98); opacity: .75; }
 .kbtn.primary { background: var(--primary); color: var(--on-primary); }
 .kbtn.primary:active { background: var(--primary-press); }
-.kbtn:disabled { background: var(--surface-2); color: var(--text-4); }
+.kbtn:disabled { background: var(--surface-3); color: var(--text-4); }
 .cd { text-align: center; font-size: 16px; color: var(--text-3); margin-top: 16px; font-variant-numeric: tabular-nums; }
 
 /* 로그인 */
 .lg-logo { width: 88px; height: 88px; margin-bottom: 28px; border-radius: 50%; }
 .page.center { height: 100%; padding: 32px; }
 .login-f { display: grid; gap: 12px; width: min(420px, 100%); margin-top: 40px; }
-.kin { height: 60px; border: 0; background: var(--surface-2); border-radius: var(--r-lg); padding: 0 20px; font-size: 18px; outline: none; color: var(--text); }
+.kin { height: 60px; border: 0; background: var(--surface-2); border-radius: 18px; padding: 0 20px; font-size: 18px; outline: none; color: var(--text); }
 .kin:focus { box-shadow: inset 0 0 0 2px var(--primary); background: var(--surface); }
 .login-f .kbtn { margin-top: 8px; }
 @media (prefers-reduced-motion: reduce) { .ring, .ring .bg { animation: none !important; } }

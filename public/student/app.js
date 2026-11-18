@@ -9,6 +9,8 @@ api.onUnauthorized = () => { me = null; renderLogin(); };
 const korDur = (m) => { m = Math.max(0, Math.round(m || 0)); const hh = Math.floor(m / 60), mm = m % 60; return hh ? (mm ? `${hh}시간 ${mm}분` : `${hh}시간`) : `${mm}분`; };
 const koreaClock = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit' });
 const clk = (ms) => koreaClock.format(ms);
+// 히어로용: 숫자는 크게, 단위는 작게 (2시간 15분 → 2 시간 15 분)
+const heroTime = (m) => { m = Math.max(0, Math.round(m || 0)); const hh = Math.floor(m / 60), mm = m % 60; return `${hh ? `<span class="n">${hh}</span><span class="u">시간</span>` : ''}<span class="n">${mm}</span><span class="u">분</span>`; };
 const hm = (m) => { m = Math.max(0, Math.round(m || 0)); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
 const ago = (ms) => { const d = (Date.now() - ms) / 60000; if (d < 1) return '방금'; if (d < 60) return `${Math.floor(d)}분 전`; if (d < 1440) return `${Math.floor(d / 60)}시간 전`; if (d < 10080) return `${Math.floor(d / 1440)}일 전`; const t = new Date(ms); return `${t.getMonth() + 1}월 ${t.getDate()}일`; };
 
@@ -83,20 +85,91 @@ const TABS = [['home', '홈'], ['seats', '좌석'], ['record', '기록'], ['boar
 function renderShell() {
   app.innerHTML = `
     <header class="appbar">
-      <div class="appbar-brand"><img src="${LOGO}" alt=""><span class="title">선린인터넷고</span></div>
-      <button class="appbar-back iconbtn" id="back-home" type="button" aria-label="홈으로 돌아가기" hidden><i class="ti ti-chevron-left" aria-hidden="true"></i></button>
-      <span class="appbar-page" hidden>좌석표</span>
-      <button class="avatar" id="mebtn" aria-label="내 정보">${h((me.name || '?').slice(-2))}</button>
+      <span></span>
+      <span class="appbar-page" aria-hidden="true"></span>
+      ${meBtn()}
     </header>
     <main id="view"></main>
     <nav class="tabbar" aria-label="학생 메뉴">${TABS.map(([k, l]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}" aria-current="${tab === k}"><span class="tab-icon"><i class="ti ti-${TABIC[k]}" aria-hidden="true"></i></span><span>${l}</span></button>`).join('')}</nav>`;
-  app.querySelector('#mebtn').onclick = mySheet;
-  app.querySelector('#back-home').onclick = () => go('home');
   refreshBadge();
   app.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => go(b.dataset.tab));
   showPage();
 }
 const pages = { home, seats: seat, record, board, notice };
+const PAGE_TITLE = { home: '오늘', seats: '좌석', record: '기록', board: '문의', notice: '공지' };
+// 큰 제목이 스크롤로 사라지면 상단 바에 작은 제목이 나타난다 (iOS 내비게이션 바)
+addEventListener('scroll', () => app.querySelector('.appbar')?.classList.toggle('scrolled', scrollY > 40), { passive: true });
+// 프로필 버튼은 페이지마다 큰 제목 줄에 있어서 이벤트 위임으로 처리
+app.addEventListener('click', (e) => { if (me && e.target.closest('.js-me')) mySheet(); });
+// ---------- iOS 네이티브 동작 ----------
+const EASE = 'cubic-bezier(.32,.72,0,1)'; // iOS 화면 전환·시트 곡선
+
+// UIAlertController 스타일 알림창
+const iosAlert = ({ title, message = '', ok = '확인', cancel = '취소', destructive = false }) => new Promise((resolve) => {
+  const d = document.createElement('dialog');
+  d.className = 'ios-alert'; d.setAttribute('aria-labelledby', 'ia-t');
+  d.innerHTML = `<div class="ia-body"><h2 id="ia-t">${h(title)}</h2>${message ? `<p>${h(message)}</p>` : ''}</div>
+    <div class="ia-btns">${cancel ? `<button type="button" value="0">${h(cancel)}</button>` : ''}<button type="button" value="1" class="${destructive ? 'bad' : 'bold'}">${h(ok)}</button></div>`;
+  let result = false;
+  d.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { result = b.value === '1'; d.close(); } });
+  d.addEventListener('close', () => { d.remove(); resolve(result); }, { once: true });
+  document.body.append(d); d.showModal();
+});
+
+// 시트 상단(그랩바·제목 줄)을 잡고 아래로 끌면 닫힌다
+function dragToDismiss(sheet, dismiss, grabZone = 60) {
+  let y0 = null; let dy = 0; let t0 = 0;
+  sheet.addEventListener('touchstart', (e) => {
+    const y = e.touches[0].clientY;
+    if (y - sheet.getBoundingClientRect().top > grabZone) { y0 = null; return; }
+    y0 = y; dy = 0; t0 = Date.now(); sheet.style.transition = 'none';
+  }, { passive: true });
+  sheet.addEventListener('touchmove', (e) => {
+    if (y0 == null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  sheet.addEventListener('touchend', () => {
+    if (y0 == null) return;
+    const fast = dy / Math.max(1, Date.now() - t0) > 0.5;
+    sheet.style.transition = `transform .35s ${EASE}`;
+    if (dy > 110 || (fast && dy > 30)) dismiss(); else sheet.style.transform = '';
+    y0 = null;
+  });
+}
+// 공통 modal()로 열리는 모든 시트에 적용
+new MutationObserver((list) => list.forEach((m) => m.addedNodes.forEach((n) => {
+  if (n.nodeType === 1 && n.classList.contains('modal-bg')) dragToDismiss(n.querySelector('.modal'), () => n.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+}))).observe(document.body, { childList: true });
+
+// 화면 왼쪽 가장자리에서 오른쪽으로 쓸면 뒤로, 맨 위에서 아래로 당기면 새로고침
+const ptrEl = document.createElement('div');
+ptrEl.className = 'ptr'; ptrEl.innerHTML = '<span class="spinner"></span>'; document.body.append(ptrEl);
+const setPtr = (d, spin = false) => { ptrEl.style.setProperty('--d', `${d}px`); ptrEl.style.opacity = Math.min(1, d / 40); ptrEl.classList.toggle('spin', spin); };
+let swipe = null; let pull = null;
+addEventListener('touchstart', (e) => {
+  if (!me || document.querySelector('.modal-bg, dialog[open]')) { swipe = pull = null; return; }
+  const t = e.touches[0];
+  swipe = null;
+  pull = scrollY <= 0 ? { y: t.clientY, d: 0 } : null;
+}, { passive: true });
+addEventListener('touchmove', (e) => {
+  if (!pull) return;
+  const d = e.touches[0].clientY - pull.y;
+  if (d > 0 && scrollY <= 0) { pull.d = Math.min(96, d * 0.45); setPtr(pull.d); } else if (d < 0) { pull = null; setPtr(0); }
+}, { passive: true });
+addEventListener('touchend', async (e) => {
+  const t = e.changedTouches[0];
+  if (swipe && t.clientX - swipe.x > 80 && Math.abs(t.clientY - swipe.y) < 60) go('home');
+  swipe = null;
+  if (!pull) return;
+  const fire = pull.d >= 48; pull = null;
+  if (!fire) return setPtr(0);
+  setPtr(48, true);
+  try { await showPage(); } finally { setPtr(0); }
+});
+
+const meBtn = () => `<button class="avatar js-me" type="button" aria-label="내 정보">${h((me?.name || '?').slice(-2))}</button>`;
 window.addEventListener('hashchange', () => { if (me && view()) showPage(); });
 
 function go(page) {
@@ -110,12 +183,10 @@ function go(page) {
 async function showPage() {
   const name = location.hash.slice(1);
   const page = Object.hasOwn(pages, name) ? name : 'home';
+  const from = tab;
   tab = page;
   const appbar = app.querySelector('.appbar');
-  appbar.classList.toggle('in-detail', page === 'seats');
-  appbar.querySelector('.appbar-brand').hidden = page === 'seats';
-  appbar.querySelector('.appbar-back').hidden = page !== 'seats';
-  appbar.querySelector('.appbar-page').hidden = page !== 'seats';
+  appbar.querySelector('.appbar-page').textContent = PAGE_TITLE[page];
   const currentView = view();
   document.querySelector('dialog.seat-detail[open]')?.close();
   app.querySelectorAll('[data-tab]').forEach((button) => {
@@ -127,6 +198,9 @@ async function showPage() {
   clearInterval(timer);
   currentView.innerHTML = '';
   scrollTo(0, 0);
+  // 좌석표는 push(오른쪽에서 들어옴), 홈으로 돌아올 땐 pop, 탭끼리는 페이드
+  currentView.classList.remove('nav-fade'); void currentView.offsetWidth;
+  currentView.classList.add('nav-fade');
   try {
     await pages[page]();
     if (view() === currentView && location.hash.slice(1) === name) {
@@ -146,16 +220,21 @@ const paint = (html) => { view().innerHTML = html; };
 const view = () => app.querySelector('#view');
 
 function mySheet() {
-  modal(`<div class="handle"></div><div class="me-head"><div class="avatar lg">${h((me.name || '?').slice(-2))}</div><div><b>${h(me.name)}</b><span>${h(me.email || me.login_id)}</span></div></div>
-    <div class="kvl">
-      <div><span>학번</span><b>${h(me.login_id)}</b></div>
-      <div><span>학년 · 반 · 번호</span><b>${h(me.grade ?? '-')}학년 ${h(me.class_no ?? '-')}반 ${h(me.number ?? '-')}번</b></div>
-      <div><span>지정석</span><b>${me.fixed_seat ? h(me.fixed_seat) : '없음 (자율석 이용)'}</b></div>
-      <div><span>얼굴 등록</span><b>${me.has_face ? '완료' : '<span class="muted">선생님께 등록 요청</span>'}</b></div>
+  const row = (label, value) => `<div class="srow"><span class="slab">${label}</span><span class="sval">${value}</span></div>`;
+  modal(`<div class="sheet-nav"><button type="button" class="x" data-close aria-label="닫기"><i class="ti ti-x" aria-hidden="true"></i></button><h2>계정</h2><span></span></div>
+    <div class="sgroup"><div class="me-head"><div class="avatar lg">${h((me.name || '?').slice(-2))}</div><div><b>${h(me.name)}</b><span>${h(me.email || me.login_id)}</span></div></div></div>
+    <div class="sgroup">
+      ${row('학번', h(me.login_id))}
+      ${row('학년 · 반 · 번호', `${h(me.grade ?? '-')}학년 ${h(me.class_no ?? '-')}반 ${h(me.number ?? '-')}번`)}
+      ${row('지정석', me.fixed_seat ? h(me.fixed_seat) : '없음')}
+      ${row('얼굴 등록', me.has_face ? '완료' : '선생님께 요청')}
     </div>
-    <p class="note" style="margin-top:12px">정보가 다르면 담당 선생님께 말해 주세요. 이름과 지정석은 선생님이 학번 기준으로 관리해요.</p>
-    <div class="sheet-actions"><button class="btn" data-close>닫기</button><button class="btn danger-fill" id="lo">로그아웃</button></div>`, {
-    onMount: (m, close) => m.querySelector('#lo').onclick = async () => { close(); await api.logout(); try { google.accounts.id.disableAutoSelect(); } catch {} renderLogin(); },
+    <p class="sfoot">정보가 다르면 담당 선생님께 말해 주세요. 이름과 지정석은 선생님이 학번 기준으로 관리해요.</p>
+    <div class="sgroup"><button type="button" class="srow-btn bad" id="lo">로그아웃</button></div>`, {
+    onMount: (m, close) => m.querySelector('#lo').onclick = async () => {
+      if (!await iosAlert({ title: '로그아웃', message: '이 기기에서 로그아웃할까요?', ok: '로그아웃', destructive: true })) return;
+      close(); await api.logout(); try { google.accounts.id.disableAutoSelect(); } catch {} renderLogin();
+    },
   });
 }
 
@@ -168,7 +247,8 @@ function weekBars(stats, todayKey) {
       <span class="wk-d" aria-hidden="true">${weekdays[i]}</span>
     </div>`).join('')}</div>`;
 }
-const ptitle = (t, right = '') => `<div class="ptitle"><h1>${t}</h1>${right}</div>`;
+const ptitle = (t, right = '') => `<div class="ptitle"><h1>${t}</h1><div class="ptitle-r">${right}</div></div>`;
+const todayLabel = () => new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date());
 
 // 안 읽은 선생님 답변 배지
 const seenKey = () => `sssms_seen_answers_${me.id}`;
@@ -182,95 +262,179 @@ async function refreshBadge(answered) {
   if (n) b.insertAdjacentHTML('beforeend', `<span class="tbadge">${n}</span>`);
 }
 
+// ---------- 공용 조각 ----------
+const chev = '<i class="ti ti-chevron-right" aria-hidden="true"></i>';
+const goBtn = `<span class="go">${chev}</span>`;
+const sectionHead = (title, link = '', id = '') => `<div class="sh"><h2>${title}</h2>${link ? `<button type="button" class="sh-link" ${id ? `id="${id}"` : ''}>${link}</button>` : ''}</div>`;
+
+// 좌석 미니맵
+function miniMap(d) {
+  const maxX = Math.max(d.cols, ...d.seats.map((s) => s.x + 1)); const maxY = Math.max(d.rows, ...d.seats.map((s) => s.y + 1));
+  const grid = Array.from({ length: maxY }, () => Array(maxX).fill(null)); d.seats.forEach((s) => { grid[s.y][s.x] = s; });
+  const cell = (s) => !s || s.type === 'disabled' ? '<i></i>' : `<i class="${s.mine ? 'mine' : s.occupied ? 'occ' : s.type === 'fixed' ? 'fixed' : 'free'}"></i>`;
+  return `<span class="mini" style="--cols:${maxX}" aria-hidden="true">${grid.flat().map(cell).join('')}</span>`;
+}
+
+// 공지·문의 상세 시트
+function postSheet(p, { label, deletable = false, onDelete } = {}) {
+  modal(`<div class="sheet-nav"><button type="button" class="x" data-close aria-label="닫기"><i class="ti ti-x" aria-hidden="true"></i></button><h2>${h(label)}</h2><span></span></div>
+    <div class="pd">
+      <p class="pd-meta">${[p.category, p.pinned ? '고정' : '', `${fmtDate(p.created_at)} ${clk(p.created_at)}`].filter(Boolean).map(h).join(' · ')}</p>
+      <h3 class="pd-title">${h(p.title)}</h3>
+      <p class="pd-body">${h(p.body)}</p>
+    </div>
+    ${p.answer ? `<p class="sfoot sfoot-head">선생님 답변 · ${ago(p.answered_at)}</p><div class="sgroup"><p class="pd-answer">${h(p.answer)}</p></div>` : ''}
+    ${deletable ? `<div class="sgroup" style="margin-top:16px"><button type="button" class="srow-btn bad" id="pdel">삭제</button></div>` : ''}`, {
+    onMount: (m, close) => {
+      m.querySelector('#pdel')?.addEventListener('click', async () => {
+        if (!await iosAlert({ title: '글을 삭제할까요?', message: '삭제한 글은 되돌릴 수 없어요.', ok: '삭제', destructive: true })) return;
+        close(); onDelete?.();
+      });
+    },
+  });
+}
+
+const BANNER_KEY = 'sssms_banner_face';
+const bannerDismissed = () => { try { return localStorage.getItem(BANNER_KEY) === '1'; } catch { return false; } };
+
 async function home() {
   const v = view();
-  v.innerHTML = '<p class="view-state" role="status">야자실 현황을 불러오는 중이에요</p>';
+  v.innerHTML = '<div class="view-state" role="status"><span class="spinner"></span><span class="sr-only">불러오는 중</span></div>';
   const pending = v.firstElementChild;
-  const stats = await api.get('/api/me/stats');
+  const [stats, seatData, noticeData] = await Promise.all([
+    api.get('/api/me/stats'),
+    api.get('/api/seats').catch(() => null),
+    api.get('/api/posts?board=notice').catch(() => ({ posts: [] })),
+  ]);
   if (!pending.isConnected) return;
 
   const currentTime = clk(Date.now());
   const running = currentTime >= stats.open_time && currentTime < stats.close_time;
-  const currentSeat = stats.open?.seat || me.fixed_seat;
   const completed = stats.today_sessions.findLast((session) => session.check_out);
-  const session = stats.open || completed;
-  const sessionStatus = stats.open ? `${clk(stats.open.check_in)} 입실` : completed ? `${clk(completed.check_out)} 퇴실` : '';
-  const free = stats.free_seats;
   const roomStatus = currentTime < stats.open_time ? `${stats.open_time}에 시작` : running ? `${stats.close_time}까지 운영` : '운영 종료';
+  const todayKey = stats.heatmap.at(-1).day;
+  const goal = Number(stats.daily_goal_min) > 0 ? Number(stats.daily_goal_min) : 240;
+  const attend = stats.week_days.filter((day) => day.minutes > 0).length;
+  const state = stats.open ? { live: 'live', text: `공부 중 · ${clk(stats.open.check_in)} 입실` }
+    : completed ? { live: '', text: `${clk(completed.check_out)} 퇴실` }
+    : { live: '', text: running ? '입실 전' : currentTime < stats.open_time ? '운영 전' : '운영 종료' };
+  const notices = [...noticeData.posts].sort((a, b) => (b.pinned - a.pinned) || (b.created_at - a.created_at)).slice(0, 3);
+  const last = stats.open ? { from: stats.open.check_in, to: null, seat: stats.open.seat } : completed ? { from: completed.check_in, to: completed.check_out, seat: completed.seat } : null;
+
+  // 추세: 이번 주 하루 평균 · 주간 출석을 이전 4주와 비교
+  const weekDays = new Set(stats.week_days.map((d) => d.day));
+  const prior = stats.heatmap.filter((d) => !weekDays.has(d.day) && d.day < stats.week_days[0].day).slice(-28);
+  const priorAtt = prior.filter((d) => d.minutes > 0);
+  const avgNow = attend ? stats.week_minutes / attend : 0;
+  const avgPrev = priorAtt.length ? priorAtt.reduce((a, d) => a + d.minutes, 0) / priorAtt.length : 0;
+  const dir = (now, prev) => !prev || !now ? 'minus' : now > prev * 1.05 ? 'chevron-up' : now < prev * 0.95 ? 'chevron-down' : 'minus';
+  const trend = [
+    ['하루 평균 공부', `${korDur(avgNow)}`, '/일', 'var(--m-move)', dir(avgNow, avgPrev)],
+    ['주간 출석', `${attend}`, '일/주', 'var(--m-stand)', dir(attend, priorAtt.length / 4)],
+    ['연속 출석', `${stats.streak.current}`, '일', 'var(--m-ex)', 'minus'],
+    ['누적 공부', korDur(stats.total_minutes), '', 'var(--m-ex)', 'minus'],
+  ];
+  const weekMax = Math.max(60, ...stats.week_days.map(({ minutes }) => minutes));
+
   v.innerHTML = `
-    <div class="student-home">
-      <section class="home-panel" aria-labelledby="room-panel-title">
-        <h1 class="panel-title" id="room-panel-title"><button class="panel-header" id="open-seats" type="button">야자실<i class="ti ti-chevron-right" aria-hidden="true"></i></button></h1>
-        <div class="panel-row">
-          <span class="panel-icon" aria-hidden="true"><i class="ti ti-layout-grid"></i></span>
-          <span class="panel-copy"><small>${h(roomStatus)}${currentSeat ? ` · ${stats.open?.seat ? '이용 중' : '지정석'} ${h(currentSeat)}` : ''}</small><b>빈 자율석 ${free}석</b></span>
-          <button class="row-action" id="seat-action" type="button">좌석표</button>
-        </div>
-      </section>
+    <h1 class="sr-only">오늘</h1>
+    <div class="lt-solo">${meBtn()}</div>
 
-      <section class="home-panel" aria-labelledby="home-record-title">
-        <h2 class="panel-title" id="home-record-title"><button class="panel-header" id="open-record" type="button">공부 기록<i class="ti ti-chevron-right" aria-hidden="true"></i></button></h2>
-        ${session ? `<div class="panel-row">
-          <span class="panel-icon" aria-hidden="true"><i class="ti ti-clock-hour-4"></i></span>
-          <span class="panel-copy"><small>오늘 공부 · ${h(sessionStatus)}</small><b id="home-time">${korDur(stats.today_minutes)}</b></span>
-        </div>` : ''}
-        <div class="panel-row">
-          <span class="panel-icon" aria-hidden="true"><i class="ti ti-chart-bar"></i></span>
-          <span class="panel-copy"><small>이번 주 공부 시간</small><b>${korDur(stats.week_minutes)}</b></span>
-          <button class="row-action" id="record-action" type="button">내역</button>
-        </div>
-        <div class="panel-row attendance-row">
-          <span class="panel-icon" aria-hidden="true"><i class="ti ti-calendar-check"></i></span>
-          <span class="panel-copy"><small>이번 주 출석</small><b>${stats.week_days.filter((day) => day.minutes > 0).length}일</b></span>
-        </div>
-      </section>
+    ${!me.has_face && !bannerDismissed() ? `<section class="card banner" id="face-banner">
+      <span class="banner-ico"><i class="ti ti-face-id" aria-hidden="true"></i></span>
+      <div><b>얼굴이 아직 등록되지 않았어요</b><p>선생님께 얼굴 등록을 요청하면 키오스크에서 바로 입실할 수 있어요.</p></div>
+      <button type="button" class="banner-x" id="banner-x" aria-label="닫기"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </section>` : ''}
 
-      ${stats.notice ? `<section class="home-panel" aria-labelledby="home-notice-title">
-        <h2 class="panel-title" id="home-notice-title"><button class="panel-header" id="open-notice" type="button">공지<i class="ti ti-chevron-right" aria-hidden="true"></i></button></h2>
-        <button class="panel-row panel-row-button" id="notice-action" type="button">
-          <span class="panel-icon" aria-hidden="true"><i class="ti ti-bell"></i></span>
-          <span class="panel-copy"><small>${ago(stats.notice.created_at)}</small><b>${h(stats.notice.title)}</b></span>
-        </button>
-      </section>` : ''}
-    </div>`;
-  v.querySelector('#open-seats').onclick = () => go('seats');
-  v.querySelector('#seat-action').onclick = () => go('seats');
+    <button type="button" class="card act" id="open-record" aria-label="오늘 공부 기록 보기">
+      <span class="ct"><h2>오늘 밤</h2><span class="ct-r ${state.live}"><i class="live-dot"></i>${h(state.text)}${goBtn}</span></span>
+      <span class="night-v" id="home-time">${heroTime(stats.today_minutes)}</span>
+      ${nightBar(stats)}
+      <span class="night-stats">
+        <span><small>목표</small><b>${Math.min(100, Math.round(stats.today_minutes / goal * 100))}<em>%</em></b></span>
+        <span><small>이번 주 출석</small><b>${attend}<em>/5일</em></b></span>
+        <span><small>종료까지</small><b>${running ? korDur(toMin(stats.close_time) - toMin(currentTime)) : '–'}</b></span>
+      </span>
+    </button>
+
+    <div class="tiles">
+      <button type="button" class="tile" data-go="record" style="--m:var(--m-ex)">
+        <span class="ct"><h2>이번 주</h2>${goBtn}</span>
+        <span class="tile-l">공부 시간</span>
+        <span class="tile-v sm">${korDur(stats.week_minutes)}</span>
+        <span class="chart"><span class="bars">${stats.week_days.map((d) => `<i class="${d.minutes ? '' : 'zero'}" style="height:${d.minutes ? Math.max(6, d.minutes / weekMax * 100) : 4}%"></i>`).join('')}</span>
+        <span class="axis">${stats.week_days.map((d, i) => `<span class="${d.day === todayKey ? 'today' : ''}">${weekdays[i]}</span>`).join('')}</span></span>
+      </button>
+      <button type="button" class="tile" data-go="seats" style="--m:var(--m-stand)">
+        <span class="ct"><h2>좌석</h2>${goBtn}</span>
+        <span class="tile-l">빈 자율석</span>
+        <span class="tile-v">${stats.free_seats}<span>석</span></span>
+        ${seatData ? miniMap(seatData) : ''}
+      </button>
+    </div>
+
+    <div class="tiles">
+      <button type="button" class="tile" data-go="record" style="--m:var(--accent)">
+        <span class="ct"><h2>세션</h2>${goBtn}</span>
+        ${last ? `<span class="sess-ico"><img src="${LOGO}" alt=""></span>
+        <span class="tile-l">${last.seat ? `${h(last.seat)} 자리` : '오늘 공부'}</span>
+        <span class="tile-v sm">${korDur(((last.to ?? Date.now()) - last.from) / 60000)}</span>
+        <span class="tile-s">${clk(last.from)}–${last.to ? clk(last.to) : '공부 중'}</span>`
+        : `<span class="tile-l" style="margin-top:12px">오늘은 아직</span><span class="tile-v sm" style="color:var(--text-4)">–</span><span class="tile-s">${h(roomStatus)}</span>`}
+      </button>
+      <button type="button" class="tile" data-go="record" style="--m:var(--m-move)">
+        <span class="ct"><h2>순위</h2>${goBtn}</span>
+        <span class="tile-l">이번 주</span>
+        <span class="tile-v">${stats.rank ? `${stats.rank}<span>위</span>` : '–'}</span>
+        <span class="tile-s">${stats.rank ? `${stats.rank_total}명 중` : '이번 주 기록이 없어요'}</span>
+      </button>
+    </div>
+
+    <section class="card">
+      <div class="ct"><h2>추세</h2></div>
+      <div class="trend-grid">${trend.map(([label, value, unit, color, icon]) => `<div class="tr" style="--m:${color}">
+        <span class="tr-ico"><i class="ti ti-${icon}" aria-hidden="true"></i></span>
+        <span><small>${label}</small><b>${value}<span>${unit}</span></b></span></div>`).join('')}</div>
+    </section>
+
+    <button type="button" class="pillbtn" data-go="record">기록 자세히 보기</button>
+
+    ${notices.length ? `${sectionHead('공지', '모두 보기', 'open-notice')}
+    <div class="card flush list">${notices.map((p, i) => `<button type="button" class="lrow" data-n="${i}">
+      <span class="lrow-t"><b>${h(p.title)}</b><small>${p.pinned ? '고정 · ' : ''}${ago(p.created_at)}</small></span>${chev}</button>`).join('')}</div>` : ''}`;
+
+  v.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => go(b.dataset.go));
   v.querySelector('#open-record').onclick = () => go('record');
-  v.querySelector('#record-action').onclick = () => go('record');
   v.querySelector('#open-notice')?.addEventListener('click', () => go('notice'));
-  v.querySelector('#notice-action')?.addEventListener('click', () => go('notice'));
+  v.querySelector('#banner-x')?.addEventListener('click', () => { try { localStorage.setItem(BANNER_KEY, '1'); } catch {} v.querySelector('#face-banner').remove(); });
+  v.querySelectorAll('[data-n]').forEach((b) => b.onclick = () => postSheet(notices[Number(b.dataset.n)], { label: '공지' }));
   if (stats.open) {
     const loadedAt = Date.now();
     const time = v.querySelector('#home-time');
     timer = setInterval(() => {
-      time.textContent = korDur(stats.today_minutes + (Date.now() - loadedAt) / 60000);
+      time.innerHTML = heroTime(stats.today_minutes + (Date.now() - loadedAt) / 60000);
     }, 15000);
   }
 }
 
-function todayTimeline(s) {
-  const minutes = (time) => {
-    const [hours, mins] = time.split(':').map(Number);
-    return hours * 60 + mins;
-  };
-  const start = minutes(s.open_time);
-  const end = minutes(s.close_time);
-  const duration = Math.max(60, end - start);
+// 야자 밤 타임라인: 운영 시간(예: 18시–23시)을 가로로 펼치고, 공부한 구간을 채우고, 지금 위치를 표시한다
+const toMin = (hhmm) => { const [a, b] = hhmm.split(':').map(Number); return a * 60 + b; };
+function nightBar(s) {
+  const start = toMin(s.open_time); const end = toMin(s.close_time); const dur = Math.max(60, end - start);
   const midnight = Date.parse(`${s.heatmap.at(-1).day}T00:00:00+09:00`);
-  const position = (ms) => Math.max(0, Math.min(100, ((ms - midnight) / 60000 - start) / duration * 100));
-  return `<div class="tl" aria-label="오늘 공부한 시간대">
-    <div class="tl-track">${s.today_sessions.map((session) => {
-      const left = position(session.check_in);
-      const right = position(session.check_out ?? Date.now());
-      return `<i class="tl-seg" style="left:${left}%;width:${Math.max(0, right - left)}%"></i>`;
-    }).join('')}</div>
-    <div class="tl-hours"><span>${h(s.open_time)}</span><span>${h(s.close_time)}</span></div>
-  </div>`;
+  const pos = (ms) => Math.max(0, Math.min(100, ((ms - midnight) / 60000 - start) / dur * 100));
+  const now = pos(Date.now());
+  const ticks = []; for (let m = Math.ceil(start / 60) * 60; m <= end; m += 60) ticks.push(m);
+  const x = (m) => (m - start) / dur * 100;
+  return `<span class="night" aria-label="오늘 밤 공부한 시간대">
+    <span class="night-track">${ticks.map((m) => `<i class="night-tick" style="left:${x(m)}%"></i>`).join('')}${s.today_sessions.map((e) => { const l = pos(e.check_in); const r = pos(e.check_out ?? Date.now()); return `<i class="night-seg" style="left:${l}%;width:${Math.max(0.8, r - l)}%"></i>`; }).join('')}${now > 0 && now < 100 ? `<i class="night-now" style="left:${now}%"></i>` : ''}</span>
+    <span class="night-axis">${ticks.map((m) => `<em style="left:${x(m)}%">${Math.floor(m / 60)}시</em>`).join('')}</span>
+  </span>`;
 }
 
 async function record() {
   const currentView = view();
-  currentView.innerHTML = '<p class="view-state" role="status">공부 기록을 불러오는 중이에요</p>';
+  currentView.innerHTML = '<div class="view-state" role="status"><span class="spinner"></span><span class="sr-only">불러오는 중</span></div>';
   const pending = currentView.firstElementChild;
   const s = await api.get('/api/me/stats');
   if (!pending.isConnected) return;
@@ -285,33 +449,33 @@ async function record() {
   const avg = attendedDays ? Math.round(s.heatmap.reduce((a, d) => a + d.minutes, 0) / attendedDays) : 0;
   const best = s.heatmap.reduce((a, d) => (d.minutes > a.minutes ? d : a), { minutes: 0 });
   paint(`
-    ${ptitle('공부 기록')}
-    <section class="record-section record-today">
-      <div class="card-h"><h2>오늘 공부</h2><span class="note">누적 ${korDur(s.total_minutes)}</span></div>
-      <p class="amount">${korDur(s.today_minutes)}</p>
-      ${goal > 0 ? `<p class="note">목표 ${korDur(goal)} · ${goalPercent}%</p>` : ''}
-      ${todayTimeline(s)}
+    ${ptitle('기록')}
+
+    ${sectionHead('오늘')}
+    <section class="card record-today">
+      <div class="rt-main">
+        <div class="rt-n"><small>오늘 공부</small><b class="amount">${korDur(s.today_minutes)}</b><span class="sub">${goal > 0 ? `목표 ${korDur(goal)} · ${goalPercent}%` : `누적 ${korDur(s.total_minutes)}`}</span></div>
+      </div>
+      ${nightBar(s)}
       ${s.today_sessions.length ? `<ul class="record-sessions">${s.today_sessions.map((session) => `<li><span>${clk(session.check_in)}–${session.check_out ? clk(session.check_out) : '공부 중'}</span><b>${korDur(((session.check_out ?? Date.now()) - session.check_in) / 60000)}</b></li>`).join('')}</ul>` : ''}
     </section>
 
-    <section class="record-section">
-      <div class="card-h"><h2>이번 주 공부</h2><span class="tag">${s.streak.current}일 연속</span></div>
+    <div class="sh"><h2>이번 주</h2><span class="sh-note">${s.streak.current}일 연속 출석</span></div>
+    <section class="card">
       <p class="amount">${korDur(s.week_minutes)}</p>
       ${weekBars(s, todayKey)}
       <div class="facts"><div><span>최고 연속</span><b>${s.streak.best}일</b></div><div><span>하루 평균</span><b>${avg ? korDur(avg) : '–'}</b></div><div><span>누적 출석</span><b>${s.streak.total_days}일</b></div></div>
     </section>
 
-    <section class="record-section" id="rank">
-      <div class="card-h"><h2>이번 주 순위</h2></div>
-      <p class="amount">${s.rank ? `${s.rank}위` : '–'}<span class="of">/ ${s.rank_total}명</span></p>
+    <div class="sh"><h2>이번 주 순위</h2><span class="sh-note">${s.rank ? `${s.rank}위 / ${s.rank_total}명` : ''}</span></div>
+    <section class="card flush" id="rank">
       <div class="rk">${s.top.map((t, i) => `<div class="${t.me ? 'me' : ''}"><em>${i + 1}</em><span class="nm">${h(t.name)}${t.me ? '<span class="tag blue">나</span>' : ''}</span><b>${korDur(t.minutes)}</b></div>`).join('')}
         ${s.rank > 5 ? `<div class="me gap"><em>${s.rank}</em><span class="nm">${h(me.name)}<span class="tag blue">나</span></span><b>${korDur(s.week_minutes)}</b></div>` : ''}</div>
-      <p class="note" style="margin-top:8px">다른 학생 이름은 가운데 글자를 가려서 보여줘요</p>
     </section>
+    <p class="page-note">다른 학생 이름은 가운데 글자를 가려서 보여줘요.</p>
 
-    <section class="record-section">
-      <div class="card-h"><h2>최근 4개월</h2></div>
-      <p class="amount">${attendedDays}일 출석</p>
+    <div class="sh"><h2>최근 4개월</h2><span class="sh-note">${attendedDays}일 출석</span></div>
+    <section class="card">
       ${best.minutes ? `<p class="note">가장 오래 공부한 날 · ${+best.day.slice(5, 7)}월 ${+best.day.slice(8)}일 ${korDur(best.minutes)}</p>` : ''}
       <div class="hm-months" style="grid-template-columns:repeat(${cols},1fr)">${months.map((m) => `<span style="grid-column:${m.c + 1}">${m.m}월</span>`).join('')}</div>
       <div class="heat">${'<i class="pad"></i>'.repeat(pad)}${s.heatmap.map((d) => `<i class="l${lvl(d.minutes)}" title="${d.day} · ${korDur(d.minutes)}"></i>`).join('')}</div>
@@ -327,11 +491,10 @@ async function seat() {
   let previousMap;
   let loading = false;
   v.innerHTML = `
-    <h1 class="sr-only">좌석표</h1>
+    ${ptitle('좌석', '<button class="gbtn-round" id="refresh" type="button" aria-label="좌석 새로고침"><i class="ti ti-refresh" aria-hidden="true"></i></button>')}
     <section class="room-plan" aria-labelledby="room-availability">
       <div class="room-availability">
-        <h2 id="room-availability">빈 자율석 <strong id="free-count" aria-live="polite">—</strong></h2>
-        <button class="iconbtn" id="refresh" aria-label="좌석 새로고침"><i class="ti ti-refresh" aria-hidden="true"></i></button>
+        <h2 id="room-availability">빈 자율석</h2><strong id="free-count" aria-live="polite">—</strong>
       </div>
       <div class="seat-view-switch" role="group" aria-label="좌석 보기 방식">
         <button type="button" id="show-map" aria-pressed="true">배치도</button>
@@ -417,6 +580,7 @@ function seatSheet(seat) {
     if (outside) dialog.close();
   });
   dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  dragToDismiss(dialog, () => dialog.close());
   document.body.append(dialog);
   dialog.showModal();
 }
@@ -446,27 +610,30 @@ async function board() {
   paint(`
     ${ptitle('문의', mine ? `<button class="compose-action" id="write" type="button"><i class="ti ti-pencil" aria-hidden="true"></i>${boardKind === 'inquiry' ? '문의 쓰기' : '신고 쓰기'}</button>` : '')}
     <div class="seg" role="tablist" style="--n:3;--i:${ki}"><span class="thumb"></span>${Object.entries(BOARDS).map(([k, l]) => `<button role="tab" aria-selected="${boardKind === k}" data-k="${k}" class="${boardKind === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-    ${posts.length ? `<p class="board-summary" role="status">${head}</p>` : ''}
-    ${posts.length ? `<section class="card flush">${posts.map((p) => `<details class="doc">
-      <summary><div class="dtx"><b>${h(p.title)}</b><small>${p.category ? `${h(p.category)} · ` : ''}${ago(p.created_at)}</small></div>${tagOf(p)}<i class="ti ti-chevron-down chev"></i></summary>
-      <div class="dbody"><p>${h(p.body)}</p>
-        ${p.answer ? `<div class="ans"><div class="ans-h"><b>선생님 답변</b><span>${ago(p.answered_at)}</span></div><p>${h(p.answer)}</p></div>` : ''}
-        ${mine && p.status === 'open' ? `<button class="lnk red" data-del="${p.id}">삭제하기</button>` : ''}</div></details>`).join('')}</section>`
+    ${posts.length ? `<p class="board-summary" role="status">${head}</p>
+    <div class="card flush list">${posts.map((p, i) => `<button type="button" class="lrow" data-p="${i}">
+      <span class="lrow-t"><b>${h(p.title)}</b><small class="prev">${h(p.body)}</small><small>${p.category ? `${h(p.category)} · ` : ''}${ago(p.created_at)}</small></span>
+      <span class="lrow-r">${tagOf(p)}${chev}</span></button>`).join('')}</div>`
       : `<section class="card"><div class="empty"><i class="ti ti-${EMPTY[0]}"></i><b>${EMPTY[1]}</b><span>${EMPTY[2]}</span></div></section>`}
     `);
   const v = view();
   v.querySelectorAll('[data-k]').forEach((b) => b.onclick = () => { if (boardKind === b.dataset.k) return; boardKind = b.dataset.k; v.querySelector('.seg').style.setProperty('--i', Object.keys(BOARDS).indexOf(boardKind)); v.querySelectorAll('[data-k]').forEach((x) => x.classList.toggle('on', x === b)); board().catch((err) => { if (tab === 'board') toast(err.message, 'error'); }); });
-  v.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('이 글을 삭제할까요?')) return; await api.del(`/api/posts/${b.dataset.del}`); toast('삭제했어요'); board(); });
+  v.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => {
+    const p = posts[Number(b.dataset.p)];
+    postSheet(p, { label: BOARDS[kind], deletable: mine && p.status === 'open', onDelete: async () => { await api.del(`/api/posts/${p.id}`); toast('삭제했어요'); board(); } });
+  });
   v.querySelector('#write')?.addEventListener('click', write);
 }
+
 function write() {
   const lost = boardKind === 'lost_report';
   const cats = lost ? ['전자기기', '필기구', '의류', '지갑·카드', '기타'] : ['시설', '소음', '좌석', '운영', '기타'];
-  modal(`<form class="sheetf" novalidate><div class="handle"></div><h2>${lost ? '분실 신고' : '문의 남기기'}</h2>
+  modal(`<form class="sheetf" novalidate>
+    <div class="sheet-nav"><button type="button" class="x" data-close aria-label="취소"><i class="ti ti-x" aria-hidden="true"></i></button><h2>${lost ? '분실 신고' : '문의 남기기'}</h2><button type="submit" class="done" id="send">보내기</button></div>
     <div class="fld"><span>분류</span><div class="chips" role="radiogroup" aria-label="분류">${cats.map((c, i) => `<label><input type="radio" name="cat" value="${c}" ${i === 0 ? 'checked' : ''}><span>${c}</span></label>`).join('')}</div></div>
     <label class="fld"><span>${lost ? '잃어버린 물건' : '제목'}</span><input class="input" name="title" maxlength="100" placeholder="${lost ? '예: 검정 무선 이어폰' : '예: 3열 에어컨이 너무 세요'}" autocomplete="off"><span class="fld-foot"><em class="err" id="e1"></em></span></label>
     <label class="fld"><span>${lost ? '언제·어디서·특징' : '내용'}</span><textarea class="input" name="body" rows="5" maxlength="1000" placeholder="${lost ? '예: 11월 16일 저녁, B23 자리 근처, 케이스에 스티커' : '선생님만 볼 수 있어요'}"></textarea><span class="fld-foot"><em class="err" id="e2"></em><em class="cnt" id="cnt">0 / 1000</em></span></label>
-    <button class="cta" id="send" style="margin-top:4px">보내기</button></form>`, {
+    </form>`, {
     onMount: (m, close) => {
       const f = m.querySelector('form'), cnt = m.querySelector('#cnt');
       f.body.oninput = () => { cnt.textContent = `${f.body.value.length} / 1000`; m.querySelector('#e2').textContent = ''; f.body.removeAttribute('aria-invalid'); };
@@ -492,13 +659,17 @@ async function notice() {
   const currentView = view();
   const { posts } = await api.get('/api/posts?board=notice');
   if (tab !== 'notice' || view() !== currentView) return;
-  const pinned = posts.filter((p) => p.pinned), rest = posts.filter((p) => !p.pinned);
-  const item = (p, open) => `<details class="doc" ${open ? 'open' : ''}><summary><div class="dtx"><b>${h(p.title)}</b><small>${fmtDate(p.created_at)} · ${ago(p.created_at)}</small></div>${p.pinned ? '<span class="tag blue">고정</span>' : ''}<i class="ti ti-chevron-down chev"></i></summary><div class="dbody"><p>${h(p.body)}</p></div></details>`;
+  const pinned = posts.filter((p) => p.pinned); const rest = posts.filter((p) => !p.pinned);
+  const group = (title, list, base) => list.length ? `<div class="sh"><h2>${title}</h2></div>
+    <div class="card flush list">${list.map((p, i) => `<button type="button" class="lrow" data-n="${base + i}">
+      <span class="lrow-t"><b>${h(p.title)}</b><small>${fmtDate(p.created_at)} · ${ago(p.created_at)}</small></span>${p.pinned ? '<span class="tag blue">고정</span>' : ''}${chev}</button>`).join('')}</div>` : '';
+  const all = [...pinned, ...rest];
   paint(`
     ${ptitle('공지')}
-    ${pinned.length ? `<section class="card flush"><p class="grp">고정 공지</p>${pinned.map((p, i) => item(p, i === 0)).join('')}</section>` : ''}
-    ${rest.length ? `<section class="card flush"><p class="grp">지난 공지</p>${rest.map((p) => item(p)).join('')}</section>` : ''}
+    ${group('고정 공지', pinned, 0)}
+    ${group('지난 공지', rest, pinned.length)}
     ${posts.length ? '' : '<section class="card"><div class="empty"><i class="ti ti-speakerphone"></i><b>아직 공지가 없어요</b><span>선생님이 공지를 올리면 여기에서 볼 수 있어요.</span></div></section>'}`);
+  view().querySelectorAll('[data-n]').forEach((b) => b.onclick = () => postSheet(all[Number(b.dataset.n)], { label: '공지' }));
 }
 
 boot();
