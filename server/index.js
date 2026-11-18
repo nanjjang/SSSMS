@@ -491,11 +491,20 @@ route('POST', '/api/admin/users/:id/blacklist', async (req, p) => {
   return { ok: true };
 });
 route('POST', '/api/admin/users/:id/face', async (req, p) => {
-  auth(req, ['admin']); const { embeddings } = await body(req);
+  auth(req, ['admin']); const { embeddings, append } = await body(req);
   if (!db.prepare("SELECT 1 FROM users WHERE id=? AND role='student'").get(p.id)) fail(404, '없는 학생');
   if (!Array.isArray(embeddings) || embeddings.length < 3 || embeddings.length > 20) fail(400, '얼굴 샘플은 3~20개가 필요합니다');
-  const vecs = embeddings.map((e) => toVec(e));
+  let vecs = embeddings.map((e) => toVec(e));
   if (vecs.some((v) => v.length < 128 || v.length > 2048 || v.length !== vecs[0].length)) fail(400, '잘못된 임베딩');
+  // 추가 등록(안경을 벗은 모습, 키오스크 카메라 등): 기존 샘플을 지우지 않고 더한다. 기존 얼굴과 같은 사람이어야 한다.
+  if (append) {
+    let prev = []; try { prev = JSON.parse(db.prepare('SELECT face FROM users WHERE id=?').get(p.id)?.face || '[]'); } catch {}
+    if (prev.length && prev[0].length === vecs[0].length) {
+      const same = vecs.filter((v) => Math.max(...prev.map((s) => similarity(v, s))) >= 0.6).length;
+      if (same < vecs.length / 2) fail(400, '이미 등록된 얼굴과 다른 사람으로 보여요. 처음부터 다시 등록해주세요.');
+      vecs = [...prev, ...vecs].slice(-36);
+    }
+  }
   // self-consistency: samples must look like the same person
   for (let i = 1; i < vecs.length; i++) if (similarity(vecs[0], vecs[i]) < 0.45) fail(400, '샘플 간 일관성이 낮습니다. 다시 촬영해주세요.');
   // duplicate check against other students

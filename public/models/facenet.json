@@ -14,6 +14,7 @@
  "agedb_30_acc": 0.9125000000000002,
  "threshold_best_acc": 0.2855,
  "threshold_far1": 0.25878721475601196,
+ "threshold_far01": 0.34,
  "tar_far1": 0.9886666666666667,
  "epoch": 18,
  "of_epochs": 18,

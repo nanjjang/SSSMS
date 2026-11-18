@@ -97,6 +97,7 @@ def lfw_eval(model, device, name="lfw"):
     neg = np.sort(sims[~y])[::-1]
     t_far = neg[int(len(neg) * 0.01)]
     tar = (sims[y] > t_far).mean()
+    lfw_eval.thr_far01 = float(neg[int(len(neg) * 0.001)])  # FAR=0.1% 기준: 서버 1:N 매칭이 사용
     return float(np.mean(accs)), float(np.mean(ths)), float(tar), float(t_far)
 
 
@@ -188,11 +189,12 @@ def main():
 
     model.load_state_dict(torch.load(os.path.join(CKPT, "facenet_best.pt")))
     acc, th, tar, t_far = lfw_eval(model, device)
+    t_far01 = lfw_eval.thr_far01
     cfp = lfw_eval(model, device, "cfp_fp")[0] if os.path.exists(os.path.join(DATA, "eval_cfp_fp_x.npy")) else None
     age = lfw_eval(model, device, "agedb_30")[0] if os.path.exists(os.path.join(DATA, "eval_agedb_30_x.npy")) else None
     export_onnx(model, os.path.join(EXPORT, "facenet.onnx"))
     meta = {"name": "sssms-facenet", "input": [1, 3, 112, 112], "norm": "(x-127.5)/128", "embedding": 128,
-            "metric": "cosine", "lfw_acc": acc, "cfp_fp_acc": cfp, "agedb_30_acc": age, "threshold_best_acc": th, "threshold_far1": t_far, "tar_far1": tar,
+            "metric": "cosine", "lfw_acc": acc, "cfp_fp_acc": cfp, "agedb_30_acc": age, "threshold_best_acc": th, "threshold_far1": t_far, "threshold_far01": t_far01, "tar_far1": tar,
             "train": "CASIA-WebFace (real, 10,572 ids, non-commercial research)" if args.data == "casia" else "DigiFace-1M subset (synthetic, non-commercial research)"}
     json.dump(meta, open(os.path.join(EXPORT, "facenet.json"), "w"), indent=1)
     print("exported", meta)

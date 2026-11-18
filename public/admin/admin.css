@@ -1,10 +1,4 @@
-/* =====================================================================
-   관리자 웹 (PC 우선, 모바일 대응) — 공통 토큰은 /common/style.css
-   구조: 상단바 56 · 사이드바 232 · 본문 최대 1280, 여백 32/40.
-   패널(흰 면, --r-lg 16, 여백 24)로 묶고, 패널 사이 16. 표는 패널 안에 꽉 차게(flush).
-   숫자 요약은 한 줄 스트립(칸 사이 구분선) — 같은 카드를 반복하지 않는다.
-   ===================================================================== */
-body { background: var(--bg); }
+body { background: var(--surface); }
 
 /* 상단바 */
 .topbar { position: sticky; top: 0; z-index: 20; height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 16px 0 20px; background: var(--surface); border-bottom: 1px solid var(--line); }
@@ -13,27 +7,25 @@ body { background: var(--bg); }
 .tb-sep { width: 1px; height: 14px; background: var(--line); }
 .tb-sub { font-size: 15px; color: var(--text-3); font-weight: 500; }
 .tb-menu { width: 40px; height: 40px; margin-left: -8px; border: 0; background: none; border-radius: var(--r-sm); font-size: 22px; color: var(--text-2); cursor: pointer; display: grid; place-items: center; }
-.tb-user { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); font-weight: 500; }
-.tb-user .av { width: 28px; height: 28px; border-radius: 50%; background: var(--surface-3); display: grid; place-items: center; font-size: 15px; color: var(--text-2); }
 @media (prefers-color-scheme: dark) { .topbar img, .login-card img { background: #fff; padding: 2px; } }
 
 /* 레이아웃 · 사이드바 */
 .layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: calc(100vh - 56px); }
-aside { position: sticky; top: 56px; height: calc(100vh - 56px); overflow: auto; padding: 16px 12px 24px; background: var(--surface); border-right: 1px solid var(--line); }
+aside { position: sticky; top: 56px; height: calc(100vh - 56px); overflow: auto; padding: 16px 12px 24px; background: var(--bg); border-right: 1px solid var(--line); }
 .grp { margin: 20px 12px 4px; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--text-3); }
 .grp:first-child { margin-top: 4px; }
 .gsep { height: 1px; background: var(--line); margin: 16px 12px; }
 aside nav button { display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; padding: 0 12px; border: 0; border-radius: var(--r-sm); background: none; color: var(--text-2); font-size: 15px; font-weight: 500; text-align: left; cursor: pointer; transition: background .15s, color .15s; }
 aside nav button:hover { background: var(--hover); color: var(--text); }
-aside nav button.on { background: var(--surface-2); color: var(--text); font-weight: 600; }
+aside nav button.on { background: var(--primary-soft); color: var(--primary-ink); font-weight: 600; box-shadow: inset 3px 0 var(--primary); }
 .nic2 { font-size: 20px; color: var(--text-3); width: 20px; flex: none; }
 aside nav button.on .nic2 { color: var(--primary); }
-aside nav button .n { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--danger); color: #fff; font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; font-variant-numeric: tabular-nums; }
+aside nav button .n { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--r-sm); background: var(--surface-3); color: var(--text); font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; font-variant-numeric: tabular-nums; }
 
 /* 본문 */
 main { padding: 32px 40px 64px; min-width: 0; max-width: 1320px; }
 .pagehead { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
-.pagehead h1 { font-size: 26px; line-height: 35px; font-weight: 700; letter-spacing: -0.03em; }
+.pagehead h1 { font-size: 32px; line-height: 1.2; font-weight: 700; letter-spacing: -0.03em; }
 .pagehead p { margin-top: 4px; font-size: 15px; line-height: 22px; color: var(--text-3); }
 .pagehead .row { gap: 8px; }
 .btn { background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
@@ -55,7 +47,7 @@ input[type=date].input, input[type=time].input { font-variant-numeric: tabular-n
 .abnr .chev { font-size: 18px; opacity: .7; }
 
 /* 패널 */
-.panel { background: var(--surface); border-radius: var(--r-lg); padding: 24px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 24px; min-width: 0; }
 .panel.flush { padding: 0; overflow: hidden; }
 .panel + .panel { margin-top: 16px; }
 .panel-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; min-height: 32px; }
@@ -68,11 +60,11 @@ input[type=date].input, input[type=time].input { font-variant-numeric: tabular-n
 .panel-foot { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); font-size: 13px; line-height: 19px; color: var(--text-3); }
 
 /* 숫자 스트립 */
-.strip { display: grid; grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr)); padding: 24px 0; margin-bottom: 16px; background: var(--surface); border-radius: var(--r-lg); }
+.strip { display: grid; grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr)); padding: 24px 0; margin-bottom: 24px; background: var(--primary-soft); border-top: 3px solid var(--primary); }
 .strip > * { display: grid; align-content: start; gap: 4px; padding: 0 24px; min-width: 0; }
-.strip > * + * { border-left: 1px solid var(--line); }
+.strip > * + * { border-left: 1px solid var(--seat-free-line); }
 .strip span { font-size: 14px; line-height: 20px; color: var(--text-2); }
-.strip b { font-size: 26px; line-height: 35px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.strip b { font-size: 30px; line-height: 35px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 .strip b small { font-size: 15px; font-weight: 500; color: var(--text-3); letter-spacing: -0.01em; margin-left: 4px; }
 .strip b.warn { color: var(--danger); }
 .strip a { color: inherit; text-decoration: none; }
@@ -240,24 +232,24 @@ table.tbl { font-size: 15px; }
 .login-card .btn { height: 52px; margin-top: 8px; font-size: 16px; }
 
 /* 반응형 */
-@media (max-width: 1180px) { .dgrid { grid-template-columns: 1fr; } .dside { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); } }
+@media (max-width: 1110px) { .dgrid { grid-template-columns: 1fr; } .dside { grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); } }
 @media (max-width: 960px) { .grid-2 { grid-template-columns: 1fr; } }
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; }
-  aside { position: fixed; z-index: 30; left: 0; top: 56px; width: 264px; transform: translateX(-100%); transition: transform .25s var(--ease); box-shadow: var(--shadow-lg); }
-  aside.open { transform: none; }
+  aside { position: fixed; z-index: 30; left: 0; top: 56px; width: 264px; transform: translateX(-100%); visibility: hidden; transition: transform .25s var(--ease), visibility .25s; box-shadow: var(--shadow-lg); }
+  aside.open { transform: none; visibility: visible; }
   main { padding: 20px 16px 48px; }
   .pagehead { align-items: stretch; flex-direction: column; }
   .pagehead h1 { font-size: 22px; line-height: 31px; }
   .pagehead .row { flex-wrap: wrap; }
   .strip { --n: 2 !important; padding: 0; }
-  .strip > div { padding: 16px 20px; }
+  .strip > * { padding: 16px 20px; }
   .strip > * + * { border-left: 0; }
-  .strip > div:nth-child(even) { border-left: 1px solid var(--line); }
-  .strip > div:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .strip > :nth-child(even) { border-left: 1px solid var(--line); }
+  .strip > :nth-child(n+3) { border-top: 1px solid var(--line); }
   .strip b { font-size: 22px; line-height: 31px; }
   .search { width: 100%; }
-  .tb-sub, .tb-sep, .tb-user span { display: none; }
+  .tb-sub, .tb-sep { display: none; }
   .cd { min-height: 64px; padding: 6px 4px; } .dn { margin-left: 0; font-size: 13px; width: 24px; height: 24px; }
   .v1 { font-size: 12px; line-height: 16px; } .v2 { font-size: 11px; line-height: 14px; }
   .wh { padding: 8px 4px; text-align: center; } .cd { justify-items: center; }

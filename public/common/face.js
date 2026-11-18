@@ -67,11 +67,12 @@ function analyze(res, video) {
   const W = video.videoWidth || 1, H = video.videoHeight || 1;
   const cx = (bx + bw / 2) / W, cy = (by + bh / 2) / H;
   const yaw = f.rotation?.angle?.yaw ?? 0;
+  const pitch = f.rotation?.angle?.pitch ?? 0;
   const mouth = Math.max(0, ...gestures.map((g) => /mouth (\d+)% open/.exec(g)?.[1] ?? 0).map(Number));
   return {
     faces: faces.length, f,
     size: bw / W, centered: Math.abs(cx - 0.5) < 0.18 && Math.abs(cy - 0.5) < 0.2,
-    yaw, blink: gestures.some((g) => g.startsWith('blink')), mouth,
+    yaw, pitch, blink: gestures.some((g) => g.startsWith('blink')), mouth,
     real: f.real ?? 0, live: f.live ?? 0, emb: f.embedding,
     quality: f.faceScore ?? f.score ?? 0,
   };
@@ -90,11 +91,29 @@ async function enrich(human, a, video) {
 }
 const sim = (human, x, y) => (x.length === 128 && y.length === 128 ? (cosine(x, y) + 1) / 2 : human.match.similarity(x, y));
 
-function avgEmb(list) {
+function meanEmb(list) {
   const n = list[0].length; const out = new Array(n).fill(0);
   for (const e of list) for (let i = 0; i < n; i++) out[i] += e[i];
   return out.map((x) => x / list.length);
 }
+const unit = (v) => { let s = 0; for (const x of v) s += x * x; s = Math.sqrt(s) || 1; return v.map((x) => x / s); };
+/**
+ * 여러 프레임의 임베딩을 하나로 합친다.
+ * 자체 모델(128차원)은 평균과 가장 동떨어진 프레임(흔들림·눈 감김 등)을 버리고 다시 평균 낸 뒤 길이를 1로 맞춘다.
+ * (길이를 맞추지 않으면 평균 벡터가 짧아져 서버의 코사인 점수가 실제보다 낮게 나온다)
+ */
+function avgEmb(list) {
+  if (list[0].length !== 128) return meanEmb(list);
+  let keep = list.map(unit);
+  if (keep.length >= 4) {
+    const m = unit(meanEmb(keep));
+    const scored = keep.map((e) => [cosine(e, m), e]).sort((x, y) => y[0] - x[0]);
+    keep = scored.slice(0, Math.ceil(keep.length * 0.75)).map((x) => x[1]);
+  }
+  return unit(meanEmb(keep));
+}
+// 표정이 중립인 프레임만 신원 비교에 쓴다 (입 벌림·눈 감김은 같은 사람이어도 점수를 떨어뜨림)
+const neutral = (a) => a.mouth < 20 && !a.blink;
 
 /**
  * Full liveness + identification capture.
@@ -107,7 +126,7 @@ export async function verifyLive(human, video, { onState, signal, steps = 2, tim
   const t0 = performance.now();
   let phase = 'align'; let alignSince = 0; let stepIdx = 0;
   let realSum = 0, liveSum = 0, n = 0;
-  const frontal = []; let firstEmb = null;
+  const frontal = []; let firstEmb = null; const finalEmbs = [];
   let turn = { neg: false, pos: false };
   // 이 기기에서 /facetest 로 보정한 기준값이 있으면 사용 (키오스크 태블릿에서 한 번 보정하면 됨)
   // 보정값은 정해진 세 항목만, 정상 범위의 값만 받아들인다 (저장된 값을 고쳐 판별 기준을 꺼 버리는 것 방지)
@@ -130,7 +149,7 @@ export async function verifyLive(human, video, { onState, signal, steps = 2, tim
     // passive PAD accumulates every frame + 깜빡임·비강체 움직임·질감 추적
     realSum += a.real; liveSum += a.live; n++;
     if (a.f?.mesh?.length) lv = tracker.update(a.f.mesh, { own: a.model === 'sssms' ? a.real : null, human: a.f.real, gestureBlink: a.blink });
-    if (Math.abs(a.yaw) < 0.2 && a.quality > 0.6 && a.emb?.length) { frontal.push(Array.from(a.emb)); firstEmb ||= Array.from(a.emb); }
+    if (Math.abs(a.yaw) < 0.2 && a.quality > 0.6 && a.emb?.length && neutral(a)) { frontal.push(Array.from(a.emb)); firstEmb ||= Array.from(a.emb); }
 
     if (phase === 'align') {
       const ok = a.centered && a.size > 0.22 && Math.abs(a.yaw) < 0.25;
@@ -162,32 +181,61 @@ export async function verifyLive(human, video, { onState, signal, steps = 2, tim
       // 살아 있는 사람 3중 확인: 깜빡임 + 비강체 움직임 + 질감
       if (st.ready && !st.checks.texture.ok) throw new Error('사진이나 화면이 아닌 실제 얼굴로 다시 해주세요');
       if (st.ready && !st.checks.motion.ok) throw new Error('움직임이 없어 실제 사람인지 확인하지 못했어요');
-      if (!st.live) { await frame(); continue; }
+      // 챌린지가 끝난 뒤 정면·무표정 프레임을 새로 3장 이상 모아 그것으로 신원을 비교한다
+      if (neutral(a) && Math.abs(a.yaw) < 0.15 && a.quality > 0.6) finalEmbs.push(Array.from(a.emb));
+      if (!st.live || finalEmbs.length < 3) { await frame(); continue; }
       const lastEmb = Array.from(a.emb);
       const real = realSum / n, live = liveSum / n;
       const continuity = firstEmb ? sim(human, firstEmb, lastEmb) : 0;
-      const recent = frontal.slice(-8);
+      const recent = finalEmbs.slice(-6);
       return { embedding: avgEmb(recent.length ? recent : [lastEmb]), pad: { real, live, continuity, challenge_passed: true, challenges: plan, frames: n,
         blinks: st.checks.blink.value, motion: +st.checks.motion.value.toFixed(4), texture: st.checks.texture.value } };
     }
   }
 }
 
-/** Enrollment: capture N good frontal samples, each must pass passive PAD. */
-export async function captureSamples(human, video, { count = 5, onState, signal, minReal = 0.5, minLive = 0.5 } = {}) {
-  const out = []; let last = 0;
+/**
+ * Enrollment: 정면 + 좌우 + 위아래로 살짝 움직인 모습을 골고루 담는다 (각 장은 passive PAD 통과 필요).
+ * 정면만 연달아 찍으면 거의 같은 사진 5장이 되어, 키오스크에서 각도·표정이 조금만 달라도 점수가 크게 떨어진다.
+ */
+export async function captureSamples(human, video, { onState, signal, minReal = 0.5, minLive = 0.5 } = {}) {
+  const STAGES = [
+    { key: 'front', need: 4, text: '정면을 바라봐주세요' },
+    { key: 'yaw', need: 4, text: '고개를 왼쪽·오른쪽으로 살짝만 돌려주세요' },
+    { key: 'pitch', need: 4, text: '턱을 살짝 들었다가 내려주세요' },
+  ];
+  const total = STAGES.reduce((s, x) => s + x.need, 0);
+  const out = []; let last = 0; let si = 0; let got = { neg: 0, pos: 0, n: 0 };
+  let base = { yaw: 0, pitch: 0, n: 0 }; let stageStart = performance.now();
   const t0 = performance.now();
-  while (out.length < count) {
+  const next = () => { si++; got = { neg: 0, pos: 0, n: 0 }; stageStart = performance.now(); };
+  while (si < STAGES.length) {
     if (signal?.aborted) throw new Error('취소됨');
-    if (performance.now() - t0 > 30000) throw new Error('시간 초과');
+    if (performance.now() - t0 > 60000) throw new Error('시간 초과');
+    const st = STAGES[si];
+    // 각도 추정이 잘 안 되는 카메라에서도 멈추지 않도록, 한 단계가 12초를 넘으면 다음으로 넘어간다
+    if (st.key !== 'front' && performance.now() - stageStart > 12000) { next(); continue; }
     const a = await enrich(human, analyze(await human.detect(video), video), video);
-    let text = '';
+    let text = st.text;
+    const ready = performance.now() - last > 300 && a.emb?.length;
     if (a.faces !== 1) text = a.faces ? '한 명만 화면에 있어야 합니다' : '얼굴을 화면에 맞춰주세요';
     else if (a.size < 0.2) text = '조금 더 가까이';
-    else if (Math.abs(a.yaw) > 0.25) text = '정면을 봐주세요';
     else if (a.real < minReal || a.live < minLive) text = '실제 얼굴로 인식되지 않습니다 (사진/화면 불가)';
-    else if (performance.now() - last > 350 && a.emb?.length) { out.push(Array.from(a.emb)); last = performance.now(); text = '촬영 중…'; }
-    onState?.({ text, progress: out.length / count, a });
+    else if (!neutral(a)) text = '입을 다물고 눈을 떠주세요';
+    else if (st.key === 'front') {
+      if (Math.abs(a.yaw) > 0.15) text = '정면을 봐주세요';
+      else if (ready) { base.yaw += a.yaw; base.pitch += a.pitch; base.n++; got.n++; out.push(Array.from(a.emb)); last = performance.now(); }
+    } else {
+      // 정면 단계에서 잰 각도를 기준으로, 살짝(약 6~20도) 벗어난 모습을 양쪽에서 절반씩 모은다
+      const d = st.key === 'yaw' ? a.yaw - base.yaw / base.n : a.pitch - base.pitch / base.n;
+      const off = st.key === 'yaw' ? Math.abs(a.pitch - base.pitch / base.n) : Math.abs(a.yaw - base.yaw / base.n);
+      const side = d < 0 ? 'neg' : 'pos'; const half = st.need / 2;
+      if (Math.abs(d) > 0.35) text = '너무 많이 돌렸어요. 살짝만 움직여주세요';
+      else if (Math.abs(d) >= 0.1 && off < 0.25 && got[side] < half && ready) { got[side]++; got.n++; out.push(Array.from(a.emb)); last = performance.now(); }
+      else if (got.neg >= half || got.pos >= half) text = st.key === 'yaw' ? '이번에는 반대쪽으로 살짝 돌려주세요' : '이번에는 반대 방향으로 살짝 움직여주세요';
+    }
+    if (got.n >= st.need) next();
+    onState?.({ text, progress: out.length / total, a });
     await frame();
   }
   return out;

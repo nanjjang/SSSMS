@@ -1,4 +1,4 @@
-import { createApi, brand, h, fmtMin, fmtTime, fmtDT, toast, modal, renderSeatMap } from '/common/api.js';
+import { createApi, h, fmtMin, fmtTime, fmtDT, toast, modal, renderSeatMap } from '/common/api.js';
 
 const api = createApi('admin');
 const app = document.getElementById('app');
@@ -11,8 +11,9 @@ window.addEventListener('hashchange', async () => {
   const m = document.getElementById('main'); if (!m) return renderShell();
   document.querySelectorAll('[data-p]').forEach((b) => b.classList.toggle('on', b.dataset.p === page));
   document.getElementById('side')?.classList.remove('open');
+  document.getElementById('menu')?.setAttribute('aria-expanded', 'false');
   try { await ({ dash, seats, att, students, evict, black, inquiry, lost, notice, settings, aidata })[page](); } catch (e) { m.innerHTML = `<div class="panel empty-state">${h(e.message)}</div>`; }
-  m.classList.remove('enter'); void m.offsetWidth; m.classList.add('enter'); scrollTo(0, 0);
+  scrollTo(0, 0);
 });
 
 async function boot() {
@@ -41,21 +42,22 @@ const GROUPS = [
 ];
 async function renderShell() {
   app.innerHTML = `
-  <header class="topbar"><button class="tb-menu" id="menu" aria-label="메뉴"><i class="ti ti-menu-2"></i></button>
+  <header class="topbar"><button class="tb-menu" id="menu" aria-label="메뉴" aria-controls="side" aria-expanded="false"><i class="ti ti-menu-2"></i></button>
     <img src="/assets/logo.svg" alt=""><b>선린 야자실</b><span class="tb-sep"></span><span class="tb-sub">관리자</span>
-    <span class="grow"></span><span class="tb-user"><span class="av"><i class="ti ti-user"></i></span><span>관리자</span></span><button class="btn sm ghost" id="logout">로그아웃</button></header>
+    <span class="grow"></span><button class="btn sm ghost" id="logout">로그아웃</button></header>
   <div class="layout"><aside id="side"><nav>
     ${GROUPS.map(([g, items]) => `${g ? `<p class="grp">${g}</p>` : '<div class="gsep"></div>'}${items.map(([k, ic, c, l]) => `<button data-p="${k}" class="${page === k ? 'on' : ''}"><i class="ti ti-${ic} nic2"></i>${l}${badges[k] ? `<span class="n">${badges[k]}</span>` : ''}</button>`).join('')}`).join('')}
   </nav></aside>
   <main id="main"><div class="empty-state">불러오는 중이에요</div></main></div>`;
   app.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => { location.hash = b.dataset.p; });
-  app.querySelector('#menu').onclick = () => app.querySelector('#side').classList.toggle('open');
+  app.querySelector('#menu').onclick = (e) => {
+    e.currentTarget.setAttribute('aria-expanded', app.querySelector('#side').classList.toggle('open'));
+  };
   app.querySelector('#logout').onclick = async () => { await api.logout(); renderLogin(); };
   try { await ({ dash, seats, att, students, evict, black, inquiry, lost, notice, settings, aidata })[page](); }
   catch (e) { main().innerHTML = `<div class="panel empty-state">${h(e.message)}</div>`; }
 }
 const main = () => document.getElementById('main');
-const SUBS_UNUSED = { dash: '오늘 야자실 상황을 한눈에 봐요', seats: '칸을 눌러 좌석을 놓고, 지정석은 학번·이름에 부여해요', att: '날짜별 입실·퇴실 기록', students: '학생은 학교 구글 계정으로 로그인하면 학번으로 이 명단과 연결돼요', evict: '지정석을 받고도 연속으로 나오지 않은 학생', black: '입실이 제한된 학생', inquiry: '학생 문의·건의에 답변해요', lost: '습득물 보관함과 학생 분실 신고', notice: '학생 앱 공지 탭에 보여요', settings: '운영 시간, 인식 기준, 관리자 계정' };
 const title = (t, right = '', sub = '') => `<div class="pagehead"><div><h1>${t}</h1>${sub ? `<p>${sub}</p>` : ''}</div><div class="row">${right}</div></div>`;
 const won = (n) => Number(n || 0).toLocaleString('ko-KR');
 
@@ -71,7 +73,7 @@ async function dash() {
   const used = d.present.length;
   main().innerHTML = `
   ${title('오늘 현황', '<button class="btn" id="rf"><i class="ti ti-refresh"></i>새로고침</button><a class="btn primary" href="#students"><i class="ti ti-user-plus"></i>학생 관리</a>', `${now.getMonth() + 1}월 ${now.getDate()}일 ${'일월화수목금토'[now.getDay()]}요일 · 운영 ${h(d.open_time)} 시작`)}
-  ${d.open_inquiries || d.candidates ? `<a class="abnr" href="#${d.open_inquiries ? 'inquiry' : 'evict'}"><i class="ti ti-bell"></i><span>${[d.open_inquiries ? `답변을 기다리는 문의 <b>${d.open_inquiries}건</b>` : '', d.candidates ? `지정석 퇴출 후보 <b>${d.candidates}명</b>` : ''].filter(Boolean).join(' · ')}</span><i class="ti ti-chevron-right chev"></i></a>` : ''}
+  ${d.candidates ? `<a class="abnr" href="#evict"><span>지정석 해제 검토 <b>${d.candidates}명</b></span><i class="ti ti-chevron-right chev" aria-hidden="true"></i></a>` : ''}
   <div class="strip" style="--n:4">
     <div><span>지금 공부 중</span><b>${used}명</b></div>
     <div><span>오늘 출석</span><b>${d.today_count}명<small>/ ${d.students}명</small></b></div>
@@ -277,7 +279,7 @@ function editStudent(u) {
     <div class="row"><label class="field grow">학번<input class="input" name="login_id" value="${h(u?.login_id || '')}" ${u ? 'disabled' : 'required'}></label><label class="field grow">이름<input class="input" name="name" value="${h(u?.name || '')}" required></label></div>
     <div class="row"><label class="field grow">학년<input class="input" type="number" name="grade" value="${u?.grade ?? ''}"></label><label class="field grow">반<input class="input" type="number" name="class_no" value="${u?.class_no ?? ''}"></label><label class="field grow">번호<input class="input" type="number" name="number" value="${u?.number ?? ''}"></label></div>
     <label class="field">${u ? '비밀번호 재설정 (비우면 유지 · 8자 이상)' : '비밀번호 (비우면 구글 로그인만 가능 · 8자 이상)'}<input class="input" name="password" type="password" autocomplete="new-password" minlength="8"></label>
-    <div class="mbtns">${u ? `<span class="left row">${u.has_face ? '<button type="button" class="btn sm ghost danger" id="dface">얼굴 삭제</button>' : ''}<button type="button" class="btn sm ghost danger" id="del">학생 삭제</button></span>` : ''}<button type="button" class="btn" data-close>취소</button><button class="btn primary">저장</button></div></form>`, {
+    <div class="mbtns">${u ? `<span class="left row">${u.has_face ? '<button type="button" class="btn sm ghost" id="aface">얼굴 추가 등록</button><button type="button" class="btn sm ghost danger" id="dface">얼굴 삭제</button>' : ''}<button type="button" class="btn sm ghost danger" id="del">학생 삭제</button></span>` : ''}<button type="button" class="btn" data-close>취소</button><button class="btn primary">저장</button></div></form>`, {
     onMount: (m, close) => {
       const f = m.querySelector('form');
       f.onsubmit = async (e) => {
@@ -287,17 +289,18 @@ function editStudent(u) {
         catch (err) { toast(err.message, 'error'); }
       };
       m.querySelector('#del')?.addEventListener('click', async () => { if (!confirm(`${u.name} 학생과 모든 출석 기록을 삭제할까요?`)) return; await api.del(`/api/admin/users/${u.id}`); close(); students(); });
+      m.querySelector('#aface')?.addEventListener('click', () => { close(); enrollFace(u, true); });
       m.querySelector('#dface')?.addEventListener('click', async () => { if (!confirm('얼굴 데이터를 삭제할까요?')) return; await api.del(`/api/admin/users/${u.id}/face`); close(); toast('삭제됨', 'ok'); students(); });
     },
   });
 }
-async function enrollFace(u) {
+async function enrollFace(u, append = false) {
   const { loadHuman, startCamera, captureSamples, drawOverlay } = await import('/common/face.js');
   const ac = new AbortController(); let stopCam = null;
-  modal(`<h2>${h(u.name)} 얼굴 등록</h2>
+  modal(`<h2>${h(u.name)} 얼굴 ${append ? '추가 등록' : '등록'}</h2>
     <div class="camwrap"><video id="ev" autoplay muted playsinline></video><canvas id="ec"></canvas></div>
     <div style="margin:16px 0 12px"><div id="et" style="font-weight:600;font-size:16px">AI 모델을 불러오는 중이에요</div><div class="prog"><i id="ep"></i></div></div>
-    <p class="desc">정면을 바라보면 5장을 촬영해요. 사진이나 화면은 위조 방지 모델이 거부해요. 원본 이미지는 저장하지 않고 특징 값만 저장해요.</p>
+    <p class="desc">정면 → 좌우로 살짝 → 위아래로 살짝 순서로 12장을 촬영해요. 가능하면 키오스크와 같은 기기·자리에서 등록하고, 안경을 쓰는 학생은 등록 후 안경을 벗고 '얼굴 추가 등록'을 한 번 더 해주세요. 사진이나 화면은 위조 방지 모델이 거부해요. 원본 이미지는 저장하지 않고 특징 값만 저장해요.</p>
     <div class="mbtns" style="margin-top:20px"><button class="btn" data-close>닫기</button></div>`, {
     onMount: async (m, close) => {
       const v = m.querySelector('#ev'), c = m.querySelector('#ec'), t = m.querySelector('#et'), p = m.querySelector('#ep');
@@ -308,12 +311,12 @@ async function enrollFace(u) {
         const human = await loadHuman();
         const cfg = await api.get('/api/kiosk/config');
         const embs = await captureSamples(human, v, {
-          count: 5, signal: ac.signal, minReal: cfg.antispoof_threshold, minLive: cfg.liveness_threshold,
+          signal: ac.signal, minReal: cfg.antispoof_threshold, minLive: cfg.liveness_threshold,
           onState: (s) => { t.textContent = s.text || '정면을 바라봐주세요'; p.style.width = `${s.progress * 100}%`; drawOverlay(c, v, s.a, s.progress ? '#4ade80' : undefined); },
         });
         t.textContent = '저장하는 중이에요';
-        await api.post(`/api/admin/users/${u.id}/face`, { embeddings: embs });
-        toast(`${u.name} 얼굴 등록 완료`, 'ok'); stopCam(); close(); students();
+        await api.post(`/api/admin/users/${u.id}/face`, { embeddings: embs, append });
+        toast(`${u.name} 얼굴 ${append ? '추가 ' : ''}등록 완료`, 'ok'); stopCam(); close(); students();
       } catch (e) { if (!ac.signal.aborted) { t.textContent = `실패: ${e.message}`; t.style.color = 'var(--danger)'; } }
     },
   });
