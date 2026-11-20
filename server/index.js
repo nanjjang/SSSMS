@@ -1,6 +1,6 @@
 process.env.TZ ||= 'Asia/Seoul';
 import { createServer } from 'node:http';
-import { stat } from 'node:fs/promises';
+import { stat, readFile } from 'node:fs/promises';
 import { createReadStream, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname, extname, normalize, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -741,6 +741,7 @@ function reserveLargeStatic(req, size) {
   };
 }
 
+const BUILD_ID = Date.now().toString(36);
 async function serveStatic(req, res, pathname) {
   const send = (status, text, headers = {}) => { res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', ...headers }); res.end(text); };
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(405, 'Method not allowed');
@@ -755,6 +756,12 @@ async function serveStatic(req, res, pathname) {
     if (info.isDirectory()) { p = join(p, 'index.html'); info = await stat(p); }
     if (!info.isFile()) return send(404, 'Not found');
     const headers = { 'content-type': MIME[extname(p)] || 'application/octet-stream', 'cache-control': 'no-cache', 'content-length': String(info.size) };
+    if (extname(p) === '.html') {
+      // Cloudflare·웹뷰가 CSS/JS를 몇 시간씩 캐시하므로, HTML(no-cache)이 가리키는 주소에 배포(서버 시작) 버전을 붙여 새 파일을 받게 한다
+      const html = (await readFile(p, 'utf8')).replace(/((?:src|href)=")(\.{0,2}\/[^"?#:]+\.(?:css|js))(")/g, `$1$2?v=${BUILD_ID}$3`);
+      headers['content-length'] = String(Buffer.byteLength(html));
+      res.writeHead(200, headers); return res.end(req.method === 'HEAD' ? undefined : html);
+    }
     if (req.method === 'HEAD') { res.writeHead(200, headers); return res.end(); }
 
     const release = reserveLargeStatic(req, info.size);
